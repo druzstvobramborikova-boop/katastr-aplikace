@@ -113,6 +113,13 @@ if rows:
 
     n_kontrola = (df["Kontrola"] == "ANO").sum()
     st.subheader("Náhled tabulky")
+    st.caption(
+        "⚠️ Tabulka níže má v pravém horním rohu (po najetí myší) svoji "
+        "vlastní malou ikonku ke stažení – ta vždy stáhne soubor jako "
+        "**.csv** (špatně se otevírá v Excelu). Pro správný Excel soubor "
+        "použijte modré tlačítko **„⬇️ Stáhnout Excel (.xlsx)“** níže pod "
+        "tabulkou."
+    )
     if n_kontrola:
         st.info(
             f"⚠️ {n_kontrola} z {len(df)} řádků má Kontrola = ANO – "
