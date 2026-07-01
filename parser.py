@@ -34,6 +34,38 @@ textu - podle něj lze snadno doladit regulární výrazy níže.
 import re
 import pdfplumber
 
+try:
+    from vokativ import vokativ as _vokativ_lib
+except ImportError:  # knihovna nemusí být při lokálním testování nainstalovaná
+    _vokativ_lib = None
+
+
+def vocative_surname(prijmeni: str, is_woman):
+    """
+    Vrátí příjmení vyskloňované do 5. pádu (vokativu) pomocí knihovny
+    `vokativ` (https://pypi.org/project/vokativ/). Pokud knihovna není
+    dostupná, jméno nelze sklonit, nebo dojde k chybě, vrátí (původní
+    příjmení beze změny, False) - druhá hodnota říká, jestli se
+    skloňování povedlo.
+    `is_woman`: True/False pokud známe pohlaví, None pro automatickou
+    detekci knihovnou (méně spolehlivé).
+    """
+    prijmeni = (prijmeni or '').strip()
+    if not prijmeni or _vokativ_lib is None:
+        return prijmeni, False
+    try:
+        kwargs = {'last_name': True}
+        if is_woman is not None:
+            kwargs['woman'] = is_woman
+        result = _vokativ_lib(prijmeni, **kwargs)
+        if not result:
+            return prijmeni, False
+        # knihovna vrací malými písmeny -> zachováme velké první písmeno
+        result = result[0].upper() + result[1:] if len(result) > 1 else result.upper()
+        return result, True
+    except Exception:
+        return prijmeni, False
+
 # ---------------------------------------------------------------------------
 # Konstanty / slovníky
 # ---------------------------------------------------------------------------
@@ -418,17 +450,33 @@ def make_person_row(raw_name: str, address: str, extra: str = '') -> dict:
     gender, ambiguous = guess_gender(parsed_name['jmeno'], parsed_name['prijmeni'])
 
     if gender == 'F':
-        osloveni = 'Vážená paní'
+        osloveni_zaklad = 'Vážená paní'
+        is_woman = True
     elif gender == 'M':
-        osloveni = 'Vážený pane'
+        osloveni_zaklad = 'Vážený pane'
+        is_woman = False
     else:
-        osloveni = 'Vážený pane / Vážená paní'
+        osloveni_zaklad = 'Vážený pane / Vážená paní'
+        is_woman = None
         ambiguous = True
+
+    osloveni = osloveni_zaklad
+    declension_failed = False
+    if gender in ('M', 'F') and parsed_name['prijmeni']:
+        vokativ_prijmeni, ok = vocative_surname(parsed_name['prijmeni'], is_woman)
+        if ok:
+            osloveni = f'{osloveni_zaklad} {vokativ_prijmeni}'
+        else:
+            osloveni = f'{osloveni_zaklad} {parsed_name["prijmeni"]}'
+            declension_failed = True
 
     kontrola = ambiguous
     poznamka_parts = []
     if extra:
         poznamka_parts.append(extra)
+    if declension_failed:
+        poznamka_parts.append('Příjmení se nepodařilo sklonit do 5. pádu - ponecháno v 1. pádu')
+        kontrola = True
 
     if address:
         addr = parse_address(address)

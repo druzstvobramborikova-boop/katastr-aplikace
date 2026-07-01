@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 app.py
-Streamlit aplikace: PDF výpis z Nahlížení do katastru -> Excel
-pro hromadnou korespondenci.
+Streamlit aplikace: PDF výpis z Nahlížení do katastru / z katastru
+nemovitostí -> Excel pro hromadnou korespondenci.
+
+Podporuje dva typy vstupních PDF:
+1) Jednodušší "Informace o stavbě" (nebo o pozemku) s sekcí
+   "Vlastníci, jiní oprávnění" - parser.py
+2) Kompletní "VÝPIS Z KATASTRU NEMOVITOSTÍ" s částí A (vlastníci) a
+   částí B (bytové jednotky) - lv_parser.py
+
+Typ se rozpozná automaticky podle obsahu PDF.
 
 Spuštění:
     streamlit run app.py
@@ -11,9 +19,11 @@ Spuštění:
 import io
 
 import pandas as pd
+import pdfplumber
 import streamlit as st
 
 from parser import process_pdf_to_rows, COLUMNS
+from lv_parser import process_lv_pdf_to_rows, LV_COLUMNS, is_lv_document
 
 st.set_page_config(
     page_title="Katastr → Excel pro hromadnou korespondenci",
@@ -58,18 +68,21 @@ if not check_password():
 
 st.title("📄 Katastr nemovitostí → Excel pro hromadnou korespondenci")
 st.write(
-    "Nahrajte PDF výpis z **Nahlížení do katastru** (informace o stavbě / "
-    "list vlastnictví) obsahující sekci „Vlastníci, jiní oprávnění“. "
-    "Aplikace z něj vytvoří tabulku vlastníků připravenou pro hromadnou "
-    "korespondenci."
+    "Nahrajte PDF z katastru nemovitostí. Aplikace automaticky pozná, "
+    "o jaký typ výpisu jde:\n"
+    "- **Informace o stavbě / o pozemku** (sekce „Vlastníci, jiní oprávnění“), nebo\n"
+    "- **Kompletní výpis z katastru (list vlastnictví)** s částí A "
+    "(vlastníci) a částí B (bytové jednotky) - výstup pak obsahuje "
+    "u každého vlastníka i číslo jeho bytové jednotky.\n\n"
+    "a podle toho vytvoří tabulku připravenou pro hromadnou korespondenci."
 )
 
-if "rows" not in st.session_state:
-    st.session_state["rows"] = None
-if "full_text" not in st.session_state:
-    st.session_state["full_text"] = ""
-if "section_text" not in st.session_state:
-    st.session_state["section_text"] = ""
+for key, default in [
+    ("rows", None), ("mode", None), ("full_text", ""),
+    ("section_text", ""), ("lv_debug", None),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 uploaded_file = st.file_uploader("Nahrát PDF soubor", type=["pdf"])
 
@@ -82,34 +95,77 @@ with col1:
 if process_clicked and uploaded_file is not None:
     with st.spinner("Zpracovávám PDF…"):
         try:
-            rows, full_text, section_text = process_pdf_to_rows(uploaded_file)
-            st.session_state["rows"] = rows
-            st.session_state["full_text"] = full_text
-            st.session_state["section_text"] = section_text
+            uploaded_file.seek(0)
+            with pdfplumber.open(uploaded_file) as pdf:
+                probe_text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+            lv_mode = is_lv_document(probe_text)
 
-            if not section_text:
-                st.error(
-                    "V PDF se nepodařilo najít sekci „Vlastníci, jiní "
-                    "oprávnění“. Rozbalte níže „Debug“ a podívejte se na "
-                    "extrahovaný text – možná je nadpis sekce v PDF napsán "
-                    "jinak, nebo PDF obsahuje naskenovaný obrázek (bez "
-                    "textové vrstvy)."
-                )
-            elif not rows:
-                st.warning(
-                    "Sekce „Vlastníci, jiní oprávnění“ byla nalezena, ale "
-                    "nepodařilo se z ní rozpoznat žádného vlastníka. "
-                    "Zkontrolujte extrahovaný text v sekci „Debug“ níže."
-                )
+            uploaded_file.seek(0)
+            if lv_mode:
+                rows, debug = process_lv_pdf_to_rows(uploaded_file)
+                st.session_state["rows"] = rows
+                st.session_state["mode"] = "lv"
+                st.session_state["full_text"] = debug["full_text"]
+                st.session_state["section_text"] = debug["part_b_text"]
+                st.session_state["lv_debug"] = debug
+
+                if not rows:
+                    st.warning(
+                        "PDF vypadá jako kompletní výpis z katastru, ale "
+                        "nepodařilo se z něj rozpoznat žádnou bytovou "
+                        "jednotku s vlastníkem. Zkontrolujte „Debug“ níže."
+                    )
+                else:
+                    st.success(
+                        f"Hotovo – rozpoznán kompletní výpis z katastru "
+                        f"(list vlastnictví). Nalezeno {debug['units_byt']} "
+                        f"bytových jednotek a {len(rows)} řádků vlastníků."
+                    )
+                    if debug["unmatched"]:
+                        st.warning(
+                            f"⚠️ U {len(debug['unmatched'])} vlastníků se "
+                            "nepodařilo dohledat adresu v části A ani podle "
+                            "jména - v tabulce jsou označeni Kontrola = ANO "
+                            "s poznámkou „Adresa nenalezena“."
+                        )
             else:
-                st.success(f"Hotovo – nalezeno {len(rows)} řádků vlastníků.")
+                rows, full_text, section_text = process_pdf_to_rows(uploaded_file)
+                st.session_state["rows"] = rows
+                st.session_state["mode"] = "simple"
+                st.session_state["full_text"] = full_text
+                st.session_state["section_text"] = section_text
+                st.session_state["lv_debug"] = None
+
+                if not section_text:
+                    st.error(
+                        "V PDF se nepodařilo najít sekci „Vlastníci, jiní "
+                        "oprávnění“. Rozbalte níže „Debug“ a podívejte se na "
+                        "extrahovaný text – možná je nadpis sekce v PDF "
+                        "napsán jinak, nebo PDF obsahuje naskenovaný obrázek "
+                        "(bez textové vrstvy)."
+                    )
+                elif not rows:
+                    st.warning(
+                        "Sekce „Vlastníci, jiní oprávnění“ byla nalezena, "
+                        "ale nepodařilo se z ní rozpoznat žádného vlastníka. "
+                        "Zkontrolujte extrahovaný text v sekci „Debug“ níže."
+                    )
+                else:
+                    st.success(f"Hotovo – nalezeno {len(rows)} řádků vlastníků.")
         except Exception as exc:  # noqa: BLE001
             st.error(f"Chyba při zpracování PDF: {exc}")
 
 rows = st.session_state.get("rows")
+mode = st.session_state.get("mode")
 
 if rows:
-    df = pd.DataFrame(rows, columns=COLUMNS)
+    columns = LV_COLUMNS if mode == "lv" else COLUMNS
+    df = pd.DataFrame(rows, columns=columns)
+    sheet_name = "Jednotky" if mode == "lv" else "Vlastnici"
+    file_name = (
+        "byty_hromadna_korespondence.xlsx"
+        if mode == "lv" else "vlastnici_hromadna_korespondence.xlsx"
+    )
 
     n_kontrola = (df["Kontrola"] == "ANO").sum()
     st.subheader("Náhled tabulky")
@@ -140,35 +196,49 @@ if rows:
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        edited_df.to_excel(writer, index=False, sheet_name="Vlastnici")
-        worksheet = writer.sheets["Vlastnici"]
+        edited_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
         for column_cells in worksheet.columns:
             max_len = max(
                 (len(str(cell.value)) for cell in column_cells if cell.value),
                 default=0,
             )
             worksheet.column_dimensions[column_cells[0].column_letter].width = min(
-                max(max_len + 2, 12), 40
+                max(max_len + 2, 12), 45
             )
     buffer.seek(0)
 
     st.download_button(
         label="⬇️ Stáhnout Excel (.xlsx)",
         data=buffer,
-        file_name="vlastnici_hromadna_korespondence.xlsx",
+        file_name=file_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
     with st.expander("🔍 Debug – zkontrolovat extrahovaný text z PDF"):
         st.caption(
             "Pokud výsledek neodpovídá očekávání, podívejte se sem – podle "
-            "tohoto textu lze snadno doladit pravidla v parser.py."
+            "tohoto textu lze snadno doladit pravidla v parser.py / "
+            "lv_parser.py."
         )
-        st.text_area(
-            "Nalezená sekce „Vlastníci, jiní oprávnění“",
-            st.session_state.get("section_text", ""),
-            height=250,
-        )
+        if mode == "lv" and st.session_state.get("lv_debug"):
+            debug = st.session_state["lv_debug"]
+            st.write(
+                f"Záznamů v části A: {debug['part_a_entries_count']} | "
+                f"Jednotek celkem: {debug['units_total']} | "
+                f"z toho typu „byt“: {debug['units_byt']}"
+            )
+            st.text_area(
+                "Text části B (jednotky)",
+                st.session_state.get("section_text", ""),
+                height=250,
+            )
+        else:
+            st.text_area(
+                "Nalezená sekce „Vlastníci, jiní oprávnění“",
+                st.session_state.get("section_text", ""),
+                height=250,
+            )
         st.text_area(
             "Celý text načtený z PDF",
             st.session_state.get("full_text", ""),

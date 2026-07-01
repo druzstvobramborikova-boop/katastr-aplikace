@@ -10,8 +10,28 @@ hromadnou korespondenci.
 | Soubor | Popis |
 |---|---|
 | `app.py` | Streamlit aplikace (UI – nahrání PDF, tlačítko Zpracovat, náhled, download) |
-| `parser.py` | Veškerá logika čtení PDF a parsování jmen/adres |
+| `parser.py` | Logika pro jednodušší PDF typu "Informace o stavbě/pozemku" (sekce „Vlastníci, jiní oprávnění“) |
+| `lv_parser.py` | Logika pro kompletní "VÝPIS Z KATASTRU NEMOVITOSTÍ" (list vlastnictví s částí A a B, výstup po bytových jednotkách) |
 | `requirements.txt` | Seznam potřebných knihoven |
+
+## Dva podporované typy PDF
+
+Aplikace automaticky pozná, jaký typ PDF jste nahráli:
+
+**1) Informace o stavbě / o pozemku** - jednodušší výpis se sekcí
+„Vlastníci, jiní oprávnění“. Výstupní sloupce: Oslovení, Titul, Jméno,
+Příjmení / Název, Ulice, Číslo domu, PSČ, Obec, Kontrola, Poznámka,
+Původní adresa.
+
+**2) Kompletní výpis z katastru (list vlastnictví)** - má část A
+(seznam vlastníků s rodnými čísly/IČO a adresami) a část B (seznam
+bytových jednotek a jejich vlastníků). Aplikace tyto dvě části spojí
+podle rodného čísla / IČO a vytvoří jeden řádek pro každého vlastníka
+KAŽDÉ bytové jednotky (pokud má jednotka víc vlastníků, je pro ně víc
+řádků). Zohledňují se jen jednotky se způsobem využití „byt“ (společné
+/ nebytové prostory typu sklepy, ateliéry apod. se do výstupu
+nezahrnují). Výstupní sloupce: Bytová jednotka, Oslovení, Jméno,
+Příjmení, Titul, Ulice, Obec, PSČ, Kontrola, Poznámka, Původní adresa.
 
 ## Instalace a spuštění na Windows
 
@@ -85,6 +105,27 @@ doladit logika v `parser.py`.
   Kontrola = ANO.
 - Na konci se odstraní přesné duplicity (stejný titul, jméno, příjmení a
   adresa).
+
+## Oslovení v 5. pádu (vokativ)
+
+Sloupec **Oslovení** obsahuje rovnou celý pozdrav se skloňovaným
+příjmením, např. „Vážený pane Nováku" nebo „Vážená paní Fialová"
+(u žen na „-ová" se v 5. pádu příjmení nemění). Skloňování zajišťuje
+knihovna [`vokativ`](https://pypi.org/project/vokativ/) (autor Michal
+Danilák), která má dle statistik četnosti jmen v ČR přesnost cca 99,7 %.
+
+**Důležité upozornění:** Automatické skloňování češtiny nikdy nebude
+100% přesné, zejména u méně obvyklých nebo cizokrajných příjmení.
+Pokud se jméno nepodaří sklonit (knihovna to sama pozná), zůstane
+v Oslovení příjmení v 1. pádu a řádek dostane Kontrola = ANO
+s poznámkou „Příjmení se nepodařilo sklonit do 5. pádu". I u úspěšně
+skloněných jmen ale doporučujeme před rozesláním korespondence
+namátkově pár řádků zkontrolovat - u některých neobvyklých jmen může
+být tvar sporný i pro rodilého mluvčího.
+
+Pokud knihovna `vokativ` není nainstalovaná (např. při lokálním testu
+bez internetu), aplikace na to nespadne - jen ponechá příjmení v 1.
+pádu u všech řádků a označí je Kontrola = ANO.
 
 ## Důležitá omezení (čtěte prosím)
 
