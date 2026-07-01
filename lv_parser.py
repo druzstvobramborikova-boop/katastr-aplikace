@@ -454,10 +454,18 @@ def _address_to_fields(address_text: str):
         kontrola = True
         notes.append('PSČ nerozpoznáno (možná zahraniční adresa)')
 
-    ulice = ', '.join(parts) if parts else ''
-    if len(parts) > 1:
-        notes.append(f'Adresa obsahuje více částí: "{ulice}"')
-
+    ulice = ''
+    if parts:
+        ulice = parts[0]
+        if len(parts) > 1:
+            district = ', '.join(parts[1:])
+            notes.append(f'Městská část / část obce v adrese (do Ulice nezahrnuto): "{district}"')
+        else:
+            kontrola = True
+            notes.append(
+                f'Nejisté, zda "{ulice}" je skutečná ulice, nebo jde o název '
+                'obce/vesnice bez ulice - zkontrolujte'
+            )
     return ulice, obec, psc, kontrola, '; '.join(notes)
 
 

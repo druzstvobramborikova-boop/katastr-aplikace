@@ -342,6 +342,13 @@ def parse_address(raw: str) -> dict:
         if len(parts) > 1:
             district = ', '.join(parts[1:])
             notes.append(f'Možná část obce uvedená v adrese: "{district}"')
+        else:
+            kontrola = True
+            street_display = f'{ulice} {cislo_domu}'.strip()
+            notes.append(
+                f'Nejisté, zda "{street_display}" je skutečná ulice, '
+                'nebo jde o název obce/vesnice bez ulice - zkontrolujte'
+            )
     else:
         if not obec:
             kontrola = True

@@ -106,6 +106,20 @@ doladit logika v `parser.py`.
 - Na konci se odstraní přesné duplicity (stejný titul, jméno, příjmení a
   adresa).
 
+## Ulice a městská část
+
+Sloupec **Ulice** obsahuje jen ulici a číslo domu (např. „Kyselova
+1185/2“) - městská část / část obce (např. „Kobylisy“) se do něj
+NEzahrnuje, protože pro hromadnou korespondenci se nepoužívá. Pokud je
+v adrese uvedená, najdete ji jen v Poznámce pro informaci.
+
+Pokud adresa naopak ŽÁDNOU městskou část neuvádí (např. „Milčice 32,
+38801 Blatná“), nejde spolehlivě poznat, jestli je první část adresy
+skutečná ulice, nebo jde o samostatnou vesnici/obec zapsanou bez
+ulice. Takové řádky se proto vždy označí **Kontrola = ANO** s
+poznámkou „Nejisté, zda je skutečná ulice…“ - očekávejte tedy u adres
+z menších obcí vyšší podíl řádků ke kontrole, to je záměr, ne chyba.
+
 ## Oslovení v 5. pádu (vokativ)
 
 Sloupec **Oslovení** obsahuje rovnou celý pozdrav se skloňovaným
