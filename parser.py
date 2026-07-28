@@ -278,7 +278,7 @@ def parse_address(raw: str) -> dict:
         cp_match = re.match(r'^(č\.?\s?(p|ev)\.?\s?\d+\w*)$', street_part, re.IGNORECASE)
         if cp_match:
             cislo_domu = street_part
-            ulice = ''
+            ulice = obec  # adresa typu "č.p. 33" nemá ulici - použijeme název obce
         else:
             sm = re.match(r'^(.*\S)\s+(\d[\d/]*\w*)$', street_part)
             if sm:
@@ -293,7 +293,7 @@ def parse_address(raw: str) -> dict:
         if len(parts) > 1:
             district = ', '.join(parts[1:])
             notes.append(f'Možná část obce uvedená v adrese: "{district}"')
-        else:
+        elif not cp_match:
             kontrola = True
             street_display = f'{ulice} {cislo_domu}'.strip()
             notes.append(

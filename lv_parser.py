@@ -438,11 +438,18 @@ def _address_to_fields(address_text: str):
 
     ulice = ''
     if parts:
-        ulice = parts[0]
+        street_part = parts[0]
+        cp_match = re.match(r'^(č\.?\s?(p|ev)\.?\s?\d+\w*)$', street_part, re.IGNORECASE)
+        if cp_match:
+            # adresa typu "č.p. 33" nemá ulici - použijeme název obce + číslo
+            ulice = f'{obec} {street_part}'.strip()
+        else:
+            ulice = street_part
+
         if len(parts) > 1:
             district = ', '.join(parts[1:])
             notes.append(f'Městská část / část obce v adrese (do Ulice nezahrnuto): "{district}"')
-        else:
+        elif not cp_match:
             kontrola = True
             notes.append(
                 f'Nejisté, zda "{ulice}" je skutečná ulice, nebo jde o název '
