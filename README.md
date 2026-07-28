@@ -1,8 +1,7 @@
 # Katastr → Excel pro hromadnou korespondenci
 
-Jednoduchá Streamlit aplikace, která z PDF výpisu z **Nahlížení do katastru
-nemovitostí** (informace o stavbě / list vlastnictví) vytáhne sekci
-„Vlastníci, jiní oprávnění“ a vyexportuje ji do Excelu připraveného pro
+Jednoduchá Streamlit aplikace, která z PDF výpisu z katastru nemovitostí
+vytáhne seznam vlastníků a vyexportuje ho do Excelu připraveného pro
 hromadnou korespondenci.
 
 ## Soubory
@@ -12,6 +11,7 @@ hromadnou korespondenci.
 | `app.py` | Streamlit aplikace (UI – nahrání PDF, tlačítko Zpracovat, náhled, download) |
 | `parser.py` | Logika pro jednodušší PDF typu "Informace o stavbě/pozemku" (sekce „Vlastníci, jiní oprávnění“) |
 | `lv_parser.py` | Logika pro kompletní "VÝPIS Z KATASTRU NEMOVITOSTÍ" (list vlastnictví s částí A a B, výstup po bytových jednotkách) |
+| `couple_merge.py` | Rozpoznání manželských párů na stejné adrese (pro sloučení korespondence) |
 | `requirements.txt` | Seznam potřebných knihoven |
 
 ## Dva podporované typy PDF
@@ -33,78 +33,38 @@ KAŽDÉ bytové jednotky (pokud má jednotka víc vlastníků, je pro ně víc
 nezahrnují). Výstupní sloupce: Bytová jednotka, Oslovení, Jméno,
 Příjmení, Titul, Ulice, Obec, PSČ, Kontrola, Poznámka, Původní adresa.
 
-## Instalace a spuštění na Windows
+## Více PDF najednou
 
-1. **Nainstalujte Python** (pokud ho ještě nemáte) – stáhněte z
-   [python.org/downloads](https://www.python.org/downloads/) a při instalaci
-   zaškrtněte „Add python.exe to PATH“.
+Do aplikace jde nahrát i **víc PDF souborů najednou** (i namíchaně oba
+typy dokumentů). Výsledek se vždy spojí do **jednoho** staženého Excel
+souboru:
 
-2. **Otevřete PowerShell nebo Příkazový řádek** ve složce s těmito soubory
-   (např. klikněte pravým tlačítkem ve složce → „Otevřít v terminálu“).
+- Pokud jsou všechny nahrané soubory stejného typu, budou spojené do
+  jednoho listu.
+- Pokud nahrajete oba typy dokumentů zároveň, výsledný sešit bude mít
+  **dva listy** ("Vlastnici" a "Jednotky").
+- Při nahrání víc souborů se navíc přidá sloupec **„Zdrojový soubor“**,
+  aby šlo poznat, odkud který řádek pochází. Při nahrání jediného
+  souboru se tento sloupec nepřidává (aby tabulka zůstala přehlednější).
+- Rozpoznávání manželských párů (viz níže) se dělá vždy jen v rámci
+  jednoho zdrojového souboru, nikdy napříč různými PDF.
 
-3. **Vytvořte virtuální prostředí** (doporučeno, ať se knihovny nemíchají
-   s ostatními projekty):
-   ```powershell
-   python -m venv venv
-   venv\Scripts\activate
-   ```
-   Po aktivaci by se na začátku řádku mělo objevit `(venv)`.
+## Manželé na stejné adrese - jeden dopis místo dvou
 
-4. **Nainstalujte potřebné knihovny:**
-   ```powershell
-   pip install -r requirements.txt
-   ```
+Aplikace do tabulky automaticky přidá dva sloupce:
 
-5. **Spusťte aplikaci:**
-   ```powershell
-   streamlit run app.py
-   ```
-   Po spuštění se automaticky otevře prohlížeč na adrese
-   `http://localhost:8501`. Pokud se neotevře sám, otevřete tuto adresu
-   ručně.
+- **Pár (manželé)** - ANO, pokud aplikace na stejné adrese (u
+  bytových jednotek na stejné jednotce) našla dvojici opačného
+  pohlaví se shodným kořenem příjmení (zvládá i nepravidelné tvary
+  jako Novotný/Novotná, Svoboda/Svobodová, ne jen prosté „-ová“).
+- **Odeslat dopis** - ANO / „NE (viz manžel/manželka výše)“. U
+  rozpoznaných párů se u DRUHÉHO z dvojice nastaví na NE, takže při
+  hromadné korespondenci stačí filtrovat sloupec „Odeslat dopis“ = ANO
+  a pár dostane jen jeden dopis.
 
-6. **Příště** stačí ve složce projektu spustit jen kroky 3 (aktivace
-   prostředí, `venv\Scripts\activate`) a 5 (`streamlit run app.py`).
-
-## Jak aplikaci používat
-
-1. Nahrajte PDF přes „Nahrát PDF soubor“.
-2. Klikněte na „🔄 Zpracovat“.
-3. Zkontrolujte náhled tabulky – řádky se sloupcem **Kontrola = ANO**
-   doporučujeme ručně zkontrolovat (důvod je vždy uveden ve sloupci
-   **Poznámka**). Tabulka je editovatelná přímo v náhledu, takže můžete
-   chyby rovnou opravit.
-4. Klikněte na „⬇️ Stáhnout Excel (.xlsx)“.
-
-Pokud se sekce vlastníků nenajde nebo se rozpozná špatně, rozbalte v
-aplikaci sekci „🔍 Debug – zkontrolovat extrahovaný text z PDF“ – uvidíte
-přesně, jaký text pdfplumber z PDF přečetl, a podle toho se dá snadno
-doladit logika v `parser.py`.
-
-## Jak nástroj funguje (stručně)
-
-- `pdfplumber` přečte text ze všech stránek PDF.
-- V textu se vyhledá nadpis „Vlastníci, jiní oprávnění“ a vyřízne se text
-  až po další nadpis (např. „Jiné zápisy“, „Omezení vlastnického práva“…).
-- Tento blok textu se řádek po řádku rozdělí na jednotlivé vlastníky:
-  řádek **bez číslice** = jméno (osoby/firmy), řádek **s číslicí** =
-  adresa. Řádky jako „Podíl: …“, „Jednotka …“, „IČO …“ se z adresy
-  vyřadí a uloží do poznámky.
-- U „SJM Příjmení1 Jméno1 a Příjmení2 Jméno2“ se vytvoří dva řádky.
-  Pokud po SJM řádku následuje jeden řádek adresy, použije se pro oba
-  manžele. Pokud následují dva řádky adresy, použije se každému manželovi
-  jeho vlastní.
-- Adresa se rozdělí na ulici, číslo domu, PSČ a obec podle posledního
-  úseku s pětimístným PSČ.
-- Tituly (Ing., Mgr., MUDr., …) se odstraní ze jména/příjmení a uloží do
-  sloupce Titul.
-- Oslovení se odhaduje podle koncovky křestního jména a příjmení
-  (typicky „-ová“ = paní, „-a“/„-ie“ na konci jména = paní, jinak pán).
-- Právnické osoby (s.r.o., a.s., obec, kraj, spolek, …) se nechají jako
-  jeden řádek se jménem v sloupci „Příjmení / Název“, osloveni „Vážení“,
-  Kontrola = ANO.
-- Na konci se odstraní přesné duplicity (stejný titul, jméno, příjmení a
-  adresa).
+I zde platí, že jde o automatické rozpoznávání - u neobvyklých
+příjmení doporučujeme páry před odesláním zkontrolovat (sloupec je
+přímo v náhledu editovatelný).
 
 ## Ulice a městská část
 
@@ -141,29 +101,67 @@ Pokud knihovna `vokativ` není nainstalovaná (např. při lokálním testu
 bez internetu), aplikace na to nespadne - jen ponechá příjmení v 1.
 pádu u všech řádků a označí je Kontrola = ANO.
 
+## Instalace a spuštění na Windows
+
+1. **Nainstalujte Python** (pokud ho ještě nemáte) – stáhněte z
+   [python.org/downloads](https://www.python.org/downloads/) a při instalaci
+   zaškrtněte „Add python.exe to PATH“.
+
+2. **Otevřete PowerShell nebo Příkazový řádek** ve složce s těmito soubory.
+
+3. **Vytvořte virtuální prostředí:**
+   ```powershell
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+
+4. **Nainstalujte potřebné knihovny:**
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+5. **Spusťte aplikaci:**
+   ```powershell
+   streamlit run app.py
+   ```
+   Po spuštění se automaticky otevře prohlížeč na adrese
+   `http://localhost:8501`.
+
+6. **Příště** stačí ve složce projektu spustit jen kroky 3 (aktivace
+   prostředí, `venv\Scripts\activate`) a 5 (`streamlit run app.py`).
+
+## Jak aplikaci používat
+
+1. Nahrajte jedno nebo víc PDF přes „Nahrát PDF soubor(y)“.
+2. Klikněte na „🔄 Zpracovat“.
+3. Zkontrolujte náhled tabulky (u smíšených typů dokumentů budou dvě
+   záložky). Řádky se sloupcem **Kontrola = ANO** doporučujeme ručně
+   zkontrolovat. Tabulka je editovatelná přímo v náhledu.
+4. Klikněte na „⬇️ Stáhnout Excel (.xlsx)“ (POZOR: nepoužívejte malou
+   ikonku pro stažení přímo nad náhledovou tabulkou – ta stahuje jako
+   .csv, což se v Excelu neotevře správně rozdělené do sloupců).
+
 ## Důležitá omezení (čtěte prosím)
 
-Formát PDF z Nahlížení do katastru se může mírně lišit (LV, informace o
-pozemku/stavbě, různé verze generátoru) a samotná extrakce textu z PDF
-(`pdfplumber`) může ztratit informace o sloupcích/odsazení. Parser proto
-pracuje s heuristikami, ne s přesnou znalostí formátu. Konkrétně:
+Formát PDF z katastru se může mírně lišit (různé verze generátoru,
+regionální odlišnosti) a extrakce textu z PDF může u některých
+neobvyklých rozvržení selhat. Parser proto pracuje s heuristikami, ne
+s přesnou znalostí formátu. Konkrétně:
 
-- **Naskenované PDF (obrázek bez textové vrstvy)** nebude fungovat vůbec –
-  text se z něj nedá přečíst. Aplikace na to upozorní (sekce se nenajde).
-- **Rozdělení ulice vs. části obce** (např. „Krásné 186, 353 01 Tři
-  Sekery“, kde „Krásné“ může být místní část, ne ulice) nelze bez databáze
-  obcí spolehlivě poznat – takové případy doporučujeme vždy zkontrolovat.
-- **Odhad pohlaví** je založen na koncovkách jmen a může se u neobvyklých
-  nebo cizích jmen zmýlit – proto existuje sloupec Kontrola.
-- Pokud parser u vašich konkrétních PDF něco systematicky špatně rozpozná,
-  podívejte se do Debug náhledu extrahovaného textu a podle něj upravte
-  regulární výrazy v `parser.py` (jsou okomentované) – případně mi pošlete
-  anonymizovaný úryvek textu (bez osobních údajů) a pravidla doladím.
+- **Naskenované PDF (obrázek bez textové vrstvy)** nebude fungovat
+  vůbec – text se z něj nedá přečíst.
+- **Rozdělení ulice vs. části obce** nelze bez databáze obcí spolehlivě
+  poznat vždy – viz sekci výše.
+- **Odhad pohlaví** a **skloňování do 5. pádu** jsou založené na
+  koncovkách jmen a mohou se u neobvyklých nebo cizích jmen zmýlit –
+  proto existuje sloupec Kontrola.
+- Pokud parser u vašich konkrétních PDF něco systematicky špatně
+  rozpozná, podívejte se do Debug náhledu extrahovaného textu a podle
+  něj upravte regulární výrazy v `parser.py` / `lv_parser.py`.
 
 ## Spuštění bez instalace Pythonu pokaždé znovu
 
-Pokud chcete aplikaci spouštět jedním kliknutím, můžete si ve složce
-projektu vytvořit soubor `spustit.bat` s tímto obsahem:
+Vytvořte si ve složce projektu soubor `spustit.bat`:
 
 ```bat
 @echo off

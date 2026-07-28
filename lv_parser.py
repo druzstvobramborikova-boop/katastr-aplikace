@@ -12,17 +12,14 @@ PDF), tento typ výpisu má dvě části, které je nutné propojit:
 - Část B: seznam BYTOVÝCH JEDNOTEK, ke každé jednotce jméno vlastníka /
   vlastníků a jejich rodné číslo / IČO (ale BEZ adresy).
 
-Propojujeme je přes rodné číslo / IČO (identifikátor), který je v obou
-částech shodný. Pro malý počet vlastníků (typicky zahraniční osoby bez
-standardního rodného čísla), kde se identifikátor nepodařilo spolehlivě
-rozpoznat, se použije záložní spárování podle jména.
+Propojujeme je přes rodné číslo / IČO (identifikátor). Pro malý počet
+vlastníků (typicky zahraniční osoby bez standardního rodného čísla),
+kde se identifikátor nepodařilo spolehlivě rozpoznat, se použije
+záložní spárování podle jména.
 
 Část A se čte pomocí souřadnic slov (ne jen prostého textu), protože
 sloupce "Vlastník", "Identifikátor" a "Podíl" se v obyčejném textovém
-exportu PDF proplétají (více-řádkové adresy se lámou jinak než
-jednořádkové identifikátory/podíly), takže čistě řádková heuristika
-by adresy přiřazovala espatně. Souřadnicový přístup je mnohem
-spolehlivější.
+exportu PDF proplétají.
 """
 
 import re
@@ -43,8 +40,8 @@ LV_COLUMNS = [
 ID_TOKEN_RE = re.compile(r'\d{6}/\d{3,4}|\d{8}-\d{3}|\d{8}')
 PODIL_SEARCH_RE = re.compile(r'\d+/\d{5,}')
 
-VLASTNIK_X0_MAX = 370  # slova nalevo od tohoto x0 patří do sloupce "Vlastník"
-RIGHT_COL_X0_MIN = 370  # slova napravo (Identifikátor + Podíl sloučeně)
+VLASTNIK_X0_MAX = 370
+RIGHT_COL_X0_MIN = 370
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +49,6 @@ RIGHT_COL_X0_MIN = 370  # slova napravo (Identifikátor + Podíl sloučeně)
 # ---------------------------------------------------------------------------
 
 def is_lv_document(full_text: str) -> bool:
-    """True, pokud jde o kompletní výpis (má části A a B), ne jen
-    jednodušší 'Informace o stavbě'."""
     return bool(re.search(r'^A Vlastník', full_text, re.MULTILINE)) and \
         bool(re.search(r'^B Nemovitosti', full_text, re.MULTILINE))
 
@@ -133,8 +128,6 @@ def _find_part_a_page_range(pdf):
             end_idx = i + 1
             for w in page.extract_words():
                 if w['text'] == 'B':
-                    # ověříme, že je to skutečně nadpis "B Nemovitosti", ne
-                    # náhodné písmeno "B" jinde na stránce
                     same_line = [x for x in page.extract_words()
                                  if abs(x['top'] - w['top']) < 2 and x['x0'] >= w['x0']]
                     same_line_text = ' '.join(x['text'] for x in sorted(same_line, key=lambda x: x['x0']))
@@ -176,9 +169,8 @@ def extract_part_a_entries(pdf):
             all_vlastnik.append((page_offset + top, text))
         for top, text in rlines:
             all_right.append((page_offset + top, text))
-        page_offset += 2000  # bezpečná mezera mezi stránkami
+        page_offset += 2000
 
-    # řádky s podílem (velký jmenovatel) slouží jako spolehlivá hranice záznamu
     podil_rows = []
     for t, txt in all_right:
         m = PODIL_SEARCH_RE.search(txt)
@@ -196,7 +188,6 @@ def extract_part_a_entries(pdf):
         ids = ID_TOKEN_RE.findall(id_text)
         entries.append({'name_address': vl_text.strip(), 'ids': ids})
 
-    # sloučení dvojitých SJ bloků, pokud omylem skončily v jednom záznamu
     entries = _split_double_sjm_entries(entries)
     return entries
 
@@ -252,7 +243,6 @@ def build_id_address_maps(entries):
         if not text:
             continue
 
-        # odstraníme prefix SJ/MCP/BSM pro účely rozdělení jméno/adresa
         m = re.match(r'^(?:SJ|MCP|BSM)\s+(.*)$', text, re.IGNORECASE)
         core = m.group(1) if m else text
 
@@ -272,13 +262,11 @@ def build_id_address_maps(entries):
                 id_to_address[e['ids'][0]] = split[0]
                 id_to_address[e['ids'][1]] = split[1]
 
-        # záložní klíč podle jména (pro chybějící/nestandardní identifikátory)
         for single_name in re.split(r'\s+a\s+', name_part):
             key = _normalize_name_key(single_name)
             if key:
                 name_to_address[key] = address_part
 
-        # i pro celé (nerozdělené) jméno entity typu "OOO ..." apod.
         key_full = _normalize_name_key(name_part)
         if key_full:
             name_to_address[key_full] = address_part
@@ -312,7 +300,7 @@ B_NOISE_PATTERNS = [
     re.compile(r'^Katastrální úřad pro', re.IGNORECASE),
     re.compile(r'^strana\s*\d+', re.IGNORECASE),
     re.compile(r'^Stavby\s*$', re.IGNORECASE),
-    re.compile(r'^[\wÁ-Žá-ž ]+, č\.p\. \d+ ', re.IGNORECASE),  # "Kobylisy, č.p. 1185 byt.dům..."
+    re.compile(r'^[\wÁ-Žá-ž ]+, č\.p\. \d+ ', re.IGNORECASE),
 ]
 
 
@@ -330,16 +318,13 @@ def extract_part_b_text(full_text: str) -> str:
 def parse_part_b_units(part_b_text: str):
     """
     Vrátí seznam jednotek:
-    [{'unit': '1185/1', 'typ_vyuziti': 'byt', 'owners': [{'ids': [...], 'name': str, ...}]}]
-    Pouze jednotky se způsobem využití 'byt' mají smysl pro tento výstup,
-    ale vracíme všechny a filtrujeme až později (pro případnou budoucí
-    potřebu / ladění).
+    [{'unit': '1185/1', 'typ_vyuziti': 'byt', 'owner_lines': [...]}]
     """
     lines = [l.strip() for l in part_b_text.split('\n') if l.strip()]
 
     units = []
     current_unit = None
-    current_owner_lines = []  # list of raw owner-line strings for current unit
+    current_owner_lines = []
 
     def flush_unit():
         if current_unit is not None:
@@ -370,10 +355,8 @@ def parse_part_b_units(part_b_text: str):
         if ';' in line:
             current_owner_lines.append(line)
         else:
-            # pokračování (zalomení) jména z předchozího řádku
             if current_owner_lines:
                 current_owner_lines[-1] = current_owner_lines[-1] + ' ' + line
-            # jinak ignorovat (nemělo by nastat)
 
     flush_unit()
     return units
@@ -385,8 +368,7 @@ SHARE_TRAILING_RE = re.compile(r'\s+\d+/\d+\s*$')
 def parse_owner_line(owner_line: str):
     """
     Rozparsuje jeden 'ID [ID2]; Jméno [podíl_na_jednotce]' řádek na
-    seznam (id, name) dvojic - dvě dvojice u SJ páru sdíleného na jedné
-    jednotce, jinak jedna.
+    seznam (id, name) dvojic.
     """
     if ';' not in owner_line:
         return []
@@ -394,7 +376,6 @@ def parse_owner_line(owner_line: str):
     id_part = id_part.strip()
     rest = rest.strip()
 
-    # odstraníme podíl na jednotce (zlomek na konci), pokud tam je
     rest = SHARE_TRAILING_RE.sub('', rest).strip()
 
     ids = ID_TOKEN_RE.findall(id_part)
@@ -403,7 +384,6 @@ def parse_owner_line(owner_line: str):
         parts = re.split(r'\s+a\s+', rest, maxsplit=1)
         if len(parts) == 2:
             return [(ids[0], parts[0].strip()), (ids[1], parts[1].strip())]
-        # nepodařilo se rozdělit jméno - vrátíme jako jeden nejednoznačný záznam
         return [(ids[0], rest), (ids[1], '')]
 
     single_id = ids[0] if ids else ''
@@ -466,6 +446,7 @@ def _address_to_fields(address_text: str):
                 f'Nejisté, zda "{ulice}" je skutečná ulice, nebo jde o název '
                 'obce/vesnice bez ulice - zkontrolujte'
             )
+
     return ulice, obec, psc, kontrola, '; '.join(notes)
 
 
@@ -560,7 +541,7 @@ def process_lv_pdf_to_rows(file):
 
     for unit in units:
         if unit.get('typ_vyuziti', '').strip() != 'byt':
-            continue  # jen bytové jednotky, ne společné/nebytové prostory
+            continue
         for owner_line in unit.get('owner_lines', []):
             for owner_id, owner_name in parse_owner_line(owner_line):
                 owner_name = owner_name.strip()

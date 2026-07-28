@@ -5,30 +5,13 @@ Logika pro extrakci sekce "Vlastníci, jiní oprávnění" z PDF výpisu
 z Nahlížení do katastru nemovitostí a její rozparsování do řádků
 vhodných pro hromadnou korespondenci.
 
-Formát vychází z reálných PDF z https://nahlizenidokn.cuzk.gov.cz/ :
-- Jméno (jména) vlastníka a jeho adresa jsou typicky NA JEDNOM ŘÁDKU,
-  oddělené čárkami: "Příjmení Jméno [tituly], Ulice č.p., Část obce, PSČ Obec"
-- Po tomto řádku následuje řádek "Jednotka: ..." (případně přes více
-  řádků) a řádek/y s podílem (zlomek typu "458/176969") - to vše se
-  ignoruje (nejde o jméno ani adresu).
-- Společné jmění manželů (SJM) se v reálných výpisech značí "SJ" (ne
-  vždy "SJM"), případně jinými kódy ("BSM", "MCP" u cizinců apod.):
-    - Pokud řádek "SJ Příjmení1 Jméno1 a Příjmení2 Jméno2" OBSAHUJE
-      čárku a za ní adresu, jde o společnou adresu pro oba.
-    - Pokud řádek čárku/adresu NEOBSAHUJE, adresy obou manželů jsou
-      uvedeny zvlášť na následujících řádcích (každý jako normální
-      "Jméno, Adresa" řádek) - ty se zpracují úplně stejně jako
-      kterýkoli jiný vlastník, deklarační "SJ ..." řádek se v tomto
-      případě jen přeskočí (informace z něj by byla duplicitní).
-- PDF obsahuje uprostřed seznamu vlastníků opakovaně řádky se
-  záhlavím/patičkou stránky (datum/čas, URL, číslo stránky) - ty se
-  na začátku odstraní.
-
 POZNÁMKA K SPOLEHLIVOSTI:
-Tato pravidla vycházejí z konkrétních vzorků reálných PDF. Pokud se u
-jiného typu výpisu (např. jiná verze generátoru Nahlížení) zformátování
-mírně liší, podívejte se v aplikaci do "Debug" náhledu extrahovaného
-textu - podle něj lze snadno doladit regulární výrazy níže.
+Formát PDF z Nahlížení do katastru se může mírně lišit podle typu
+výpisu (LV, informace o stavbě, informace o pozemku) a podle toho, jak
+pdfplumber text z PDF přečte. Parser proto pracuje s heuristikami
+popsanými v komentářích. Pokud parser u konkrétního PDF něco rozpozná
+špatně, nejprve se podívejte do "debug" náhledu extrahovaného textu
+v aplikaci - podle něj lze snadno doladit regulární výrazy níže.
 """
 
 import re
@@ -60,11 +43,11 @@ def vocative_surname(prijmeni: str, is_woman):
         result = _vokativ_lib(prijmeni, **kwargs)
         if not result:
             return prijmeni, False
-        # knihovna vrací malými písmeny -> zachováme velké první písmeno
         result = result[0].upper() + result[1:] if len(result) > 1 else result.upper()
         return result, True
     except Exception:
         return prijmeni, False
+
 
 # ---------------------------------------------------------------------------
 # Konstanty / slovníky
@@ -76,8 +59,6 @@ COLUMNS = [
     'Kontrola', 'Poznámka', 'Původní adresa',
 ]
 
-# Tituly - pořadí v seznamu není podstatné, při hledání se řadí podle
-# délky (viz extract_titles), aby se nejdřív odstranily delší varianty.
 TITLE_LIST = [
     'PharmDr.', 'MUDr.', 'JUDr.', 'RNDr.', 'PhDr.', 'MVDr.', 'RSDr.',
     'Ph.D.', 'Ph.D', 'PhD.', 'PhD', 'Phd.',
@@ -85,8 +66,6 @@ TITLE_LIST = [
     'Bc.', 'MBA', 'M.A.', 'LL.M.',
 ]
 
-# Klíčová slova pro rozpoznání právnické osoby / státu / organizace
-# (porovnávají se jako celá slova, ne jako podřetězec - viz is_company)
 COMPANY_KEYWORDS = [
     's.r.o', 'a.s.', 'k.s.', 'v.o.s', 'spol. s r', 'družstvo',
     'státní podnik', 's.p.', 'česká republika', 'spolek', 'nadace',
@@ -101,16 +80,11 @@ COMPANY_KEYWORD_PATTERNS = [
     for kw in COMPANY_KEYWORDS
 ]
 
-# Jména, u kterých si nejsme jisti pohlavím (vzácná, dvojrodá apod.)
 AMBIGUOUS_NAMES = {'nikola', 'saša', 'mája'}
-
-# Mužská jména končící na "a", která by jinak heuristika vyhodnotila jako ženská
 MALE_NAMES_ENDING_A = {'jura', 'pepa', 'honza'}
 
-# Prefixy označující společné jmění manželů / spoluvlastnictví dvou osob
 JOINT_OWNERSHIP_PREFIXES = r'(?:SJM|SJ|BSM|MCP)'
 
-# Řádky, které nejsou jméno ani adresa (podíl, jednotka, RČ, IČO, hlavičky…)
 NOISE_PATTERNS = [
     re.compile(r'^podíl\b', re.IGNORECASE),
     re.compile(r'^jednotka\b', re.IGNORECASE),
@@ -125,13 +99,11 @@ NOISE_PATTERNS = [
     re.compile(r'^upozorn[ěe]n[ií]', re.IGNORECASE),
 ]
 
-# Hlavičky, kterými typicky sekce "Vlastníci, jiní oprávnění" v textu začíná
 SECTION_START_PATTERNS = [
     r'Vlastníci,\s*jiní\s*oprávn[eě]n[ií]',
     r'Vlastník,\s*jiný\s*oprávněný',
 ]
 
-# Hlavičky následujících sekcí, kterými extrakce končí
 SECTION_END_MARKERS = [
     'Příslušnost hospodařit s majetkem státu',
     'Způsob ochrany nemovitosti',
@@ -141,7 +113,6 @@ SECTION_END_MARKERS = [
     'Související zápisy',
 ]
 
-# Patičky / hlavičky stránek, které je vhodné z textu odstranit
 FOOTER_LINE_PATTERNS = [
     re.compile(r'^Strana\s*\d+', re.IGNORECASE),
     re.compile(r'^Vyhotoveno', re.IGNORECASE),
@@ -175,7 +146,6 @@ def _clean_full_text(full_text: str) -> str:
 
 
 def extract_full_text(file) -> str:
-    """Vrátí celý text PDF (po odstranění patiček/hlaviček stránek)."""
     chunks = []
     with pdfplumber.open(file) as pdf:
         for page in pdf.pages:
@@ -185,7 +155,6 @@ def extract_full_text(file) -> str:
 
 
 def extract_owners_section(full_text: str) -> str:
-    """Vyřízne ze zadaného textu pouze sekci 'Vlastníci, jiní oprávnění'."""
     start_match = None
     for pattern in SECTION_START_PATTERNS:
         m = re.search(pattern, full_text, re.IGNORECASE)
@@ -207,33 +176,18 @@ def extract_owners_section(full_text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Seskupení textu sekce na jednotlivé záznamy ("Jméno, Adresa" řádky)
+# Seskupení textu sekce na jednotlivé záznamy
 # ---------------------------------------------------------------------------
 
 def is_noise_line(line: str) -> bool:
     if any(p.search(line) for p in NOISE_PATTERNS):
         return True
-    # řádek bez jediného písmene (pokračování seznamu jednotek, samotný
-    # zlomek podílu apod.) není ani jméno, ani adresa
     if not any(ch.isalpha() for ch in line):
         return True
     return False
 
 
 def build_entries(section_text: str):
-    """
-    Rozdělí text sekce na jednotlivé záznamy (řetězce).
-
-    Princip: každý netriviální ("obsahový") řádek je buď:
-    - kompletní záznam "Jméno, Adresa" (obvykle obsahuje čárku),
-    - samostatné jméno bez adresy (např. "Česká republika", nebo
-      deklarace "SJ Příjmení1 Jméno1 a Příjmení2 Jméno2" bez adresy -
-      v tom případě jsou skutečné adresy uvedeny na následujících
-      řádcích jako vlastní kompletní záznamy),
-    - nebo pokračování (zalomení) předchozího řádku přes stránku/šířku
-      (typicky bez čárky a bezprostředně navazující na předchozí
-      obsahový řádek bez "šumu" mezi nimi).
-    """
     raw_lines = [l.strip() for l in section_text.split('\n')]
     raw_lines = [l for l in raw_lines if l]
 
@@ -249,11 +203,8 @@ def build_entries(section_text: str):
 
         if prev_was_content and entries and (',' not in line or prev_ends_with_hyphen):
             if prev_ends_with_hyphen:
-                # rozdělené slovo/místní část přes konec řádku (např. "Liberec
-                # XIV-" / "Ruprechtice") - spojíme bez mezery
                 entries[-1] = entries[-1] + line
             else:
-                # běžné zalomení (wrap) předchozího řádku
                 entries[-1] = entries[-1] + ' ' + line
         else:
             entries.append(line)
@@ -315,8 +266,6 @@ def parse_address(raw: str) -> dict:
     ulice = ''
     cislo_domu = ''
 
-    # Pokud se na konec obce omylem přilepil zlomek podílu (důsledek
-    # specifického zalomení řádků v PDF u některých záznamů), odstraníme ho.
     frac_match = re.search(r'\s+\d+\s*/\s*\d+\s*$', obec)
     if frac_match:
         obec = obec[:frac_match.start()].strip()
@@ -373,7 +322,6 @@ def extract_titles(text: str):
         if pattern.search(remaining):
             found.append(t)
             remaining = pattern.sub('', remaining)
-    # spojky mezi tituly typu "Ing. et Bc." - odstraníme osamocené "et"
     remaining = re.sub(r'\bet\b', ' ', remaining, flags=re.IGNORECASE)
     remaining = re.sub(r'\s*,\s*', ' ', remaining)
     remaining = re.sub(r'\s+', ' ', remaining).strip(' ,')
@@ -391,7 +339,6 @@ def parse_person_name(raw: str) -> dict:
 
 
 def guess_gender(jmeno: str, prijmeni: str):
-    """Vrátí ('M'|'F'|None, ambiguous: bool)."""
     if not jmeno:
         return None, True
     jmeno_low = jmeno.split()[0].lower() if jmeno.split() else ''
@@ -519,20 +466,12 @@ def make_person_row(raw_name: str, address: str, extra: str = '') -> dict:
 
 
 def make_no_address_row(text: str, extra: str = '') -> dict:
-    """Záznam bez adresy (stát, organizace, nebo vlastník, jehož adresa
-    se v textu nepodařilo najít)."""
     if is_company(text):
         return make_company_row(text, '', extra)
     return make_person_row(text, '', extra)
 
 
 def split_name_address(text: str):
-    """
-    Rozdělí text na (jméno, adresa) podle první čárky - ALE pokud část
-    hned za čárkou je sama o sobě jen titul (např. ", MBA" u "PhDr.
-    Ph.D., MBA, Kyselova ..."), spojí ji zpátky ke jménu a zkusí další
-    čárku. Zabraňuje tomu, aby titul za čárkou skončil omylem v adrese.
-    """
     if ',' not in text:
         return text.strip(), ''
     name_part, address_part = text.split(',', 1)
@@ -583,9 +522,6 @@ def process_entry_text(entry_text: str):
                 )
                 return [row]
         else:
-            # bez adresy - skutečné adresy manželů jsou na následujících
-            # samostatných řádcích, které se zpracují jako normální
-            # vlastníci. Tento deklarační řádek proto přeskočíme.
             return []
 
     if ',' in text:
@@ -618,11 +554,6 @@ def dedupe(rows):
 
 
 def process_pdf_to_rows(file):
-    """
-    Hlavní vstupní funkce.
-    `file` může být cesta k souboru nebo file-like objekt (např. z st.file_uploader).
-    Vrací (rows, full_text, section_text).
-    """
     full_text = extract_full_text(file)
     section_text = extract_owners_section(full_text)
 

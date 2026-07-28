@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 app.py
-Streamlit aplikace: PDF výpis z Nahlížení do katastru / z katastru
+Streamlit aplikace: PDF výpis(y) z Nahlížení do katastru / z katastru
 nemovitostí -> Excel pro hromadnou korespondenci.
 
-Podporuje dva typy vstupních PDF:
+Podporuje dva typy vstupních PDF (rozpozná se automaticky):
 1) Jednodušší "Informace o stavbě" (nebo o pozemku) s sekcí
    "Vlastníci, jiní oprávnění" - parser.py
 2) Kompletní "VÝPIS Z KATASTRU NEMOVITOSTÍ" s částí A (vlastníci) a
    částí B (bytové jednotky) - lv_parser.py
 
-Typ se rozpozná automaticky podle obsahu PDF.
+Lze nahrát i VÍCE PDF najednou (i namíchaně oba typy) - výsledek se
+spojí do JEDNOHO Excel souboru (pokud jsou nahrané oba typy, budou ve
+výsledném sešitu dva listy).
 
 Spuštění:
     streamlit run app.py
@@ -24,6 +26,7 @@ import streamlit as st
 
 from parser import process_pdf_to_rows, COLUMNS
 from lv_parser import process_lv_pdf_to_rows, LV_COLUMNS, is_lv_document
+from couple_merge import mark_married_couples
 
 st.set_page_config(
     page_title="Katastr → Excel pro hromadnou korespondenci",
@@ -42,7 +45,7 @@ def check_password() -> bool:
     def password_entered():
         correct = st.secrets.get("APP_PASSWORD", None)
         if correct is None:
-            st.session_state["password_correct"] = True  # lokální vývoj bez secrets.toml
+            st.session_state["password_correct"] = True
             return
         if st.session_state.get("password_input", "") == correct:
             st.session_state["password_correct"] = True
@@ -68,32 +71,37 @@ if not check_password():
 
 st.title("📄 Katastr nemovitostí → Excel pro hromadnou korespondenci")
 st.write(
-    "Nahrajte PDF z katastru nemovitostí. Aplikace automaticky pozná, "
-    "o jaký typ výpisu jde:\n"
+    "Nahrajte jedno nebo víc PDF z katastru nemovitostí. Aplikace u "
+    "každého automaticky pozná, o jaký typ výpisu jde:\n"
     "- **Informace o stavbě / o pozemku** (sekce „Vlastníci, jiní oprávnění“), nebo\n"
     "- **Kompletní výpis z katastru (list vlastnictví)** s částí A "
     "(vlastníci) a částí B (bytové jednotky) - výstup pak obsahuje "
     "u každého vlastníka i číslo jeho bytové jednotky.\n\n"
-    "a podle toho vytvoří tabulku připravenou pro hromadnou korespondenci."
+    "Pokud nahrajete víc souborů, spojí se do **jednoho** Excelu "
+    "(pokud jsou mezi nimi oba typy dokumentů, budou ve výsledném "
+    "sešitu dva listy)."
 )
 
 for key, default in [
-    ("rows", None), ("mode", None), ("full_text", ""),
-    ("section_text", ""), ("lv_debug", None),
+    ("results", None),  # list of dicts: {filename, mode, rows, debug}
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-uploaded_file = st.file_uploader("Nahrát PDF soubor", type=["pdf"])
+uploaded_files = st.file_uploader(
+    "Nahrát PDF soubor(y)", type=["pdf"], accept_multiple_files=True
+)
 
 col1, _ = st.columns([1, 4])
 with col1:
     process_clicked = st.button(
-        "🔄 Zpracovat", type="primary", disabled=uploaded_file is None
+        "🔄 Zpracovat", type="primary", disabled=not uploaded_files
     )
 
-if process_clicked and uploaded_file is not None:
-    with st.spinner("Zpracovávám PDF…"):
+if process_clicked and uploaded_files:
+    results = []
+    progress = st.progress(0.0, text="Zpracovávám soubory…")
+    for i, uploaded_file in enumerate(uploaded_files):
         try:
             uploaded_file.seek(0)
             with pdfplumber.open(uploaded_file) as pdf:
@@ -103,110 +111,223 @@ if process_clicked and uploaded_file is not None:
             uploaded_file.seek(0)
             if lv_mode:
                 rows, debug = process_lv_pdf_to_rows(uploaded_file)
-                st.session_state["rows"] = rows
-                st.session_state["mode"] = "lv"
-                st.session_state["full_text"] = debug["full_text"]
-                st.session_state["section_text"] = debug["part_b_text"]
-                st.session_state["lv_debug"] = debug
-
-                if not rows:
-                    st.warning(
-                        "PDF vypadá jako kompletní výpis z katastru, ale "
-                        "nepodařilo se z něj rozpoznat žádnou bytovou "
-                        "jednotku s vlastníkem. Zkontrolujte „Debug“ níže."
-                    )
-                else:
-                    st.success(
-                        f"Hotovo – rozpoznán kompletní výpis z katastru "
-                        f"(list vlastnictví). Nalezeno {debug['units_byt']} "
-                        f"bytových jednotek a {len(rows)} řádků vlastníků."
-                    )
-                    if debug["unmatched"]:
-                        st.warning(
-                            f"⚠️ U {len(debug['unmatched'])} vlastníků se "
-                            "nepodařilo dohledat adresu v části A ani podle "
-                            "jména - v tabulce jsou označeni Kontrola = ANO "
-                            "s poznámkou „Adresa nenalezena“."
-                        )
+                results.append({
+                    "filename": uploaded_file.name,
+                    "mode": "lv",
+                    "rows": rows,
+                    "debug": debug,
+                    "error": None,
+                })
             else:
                 rows, full_text, section_text = process_pdf_to_rows(uploaded_file)
-                st.session_state["rows"] = rows
-                st.session_state["mode"] = "simple"
-                st.session_state["full_text"] = full_text
-                st.session_state["section_text"] = section_text
-                st.session_state["lv_debug"] = None
-
-                if not section_text:
-                    st.error(
-                        "V PDF se nepodařilo najít sekci „Vlastníci, jiní "
-                        "oprávnění“. Rozbalte níže „Debug“ a podívejte se na "
-                        "extrahovaný text – možná je nadpis sekce v PDF "
-                        "napsán jinak, nebo PDF obsahuje naskenovaný obrázek "
-                        "(bez textové vrstvy)."
-                    )
-                elif not rows:
-                    st.warning(
-                        "Sekce „Vlastníci, jiní oprávnění“ byla nalezena, "
-                        "ale nepodařilo se z ní rozpoznat žádného vlastníka. "
-                        "Zkontrolujte extrahovaný text v sekci „Debug“ níže."
-                    )
-                else:
-                    st.success(f"Hotovo – nalezeno {len(rows)} řádků vlastníků.")
+                results.append({
+                    "filename": uploaded_file.name,
+                    "mode": "simple",
+                    "rows": rows,
+                    "debug": {"full_text": full_text, "section_text": section_text},
+                    "error": None,
+                })
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Chyba při zpracování PDF: {exc}")
+            results.append({
+                "filename": uploaded_file.name,
+                "mode": None,
+                "rows": [],
+                "debug": None,
+                "error": str(exc),
+            })
+        progress.progress((i + 1) / len(uploaded_files), text=f"Zpracováno {i + 1}/{len(uploaded_files)}")
+    progress.empty()
 
-rows = st.session_state.get("rows")
-mode = st.session_state.get("mode")
+    st.session_state["results"] = results
 
-if rows:
-    columns = LV_COLUMNS if mode == "lv" else COLUMNS
-    df = pd.DataFrame(rows, columns=columns)
-    sheet_name = "Jednotky" if mode == "lv" else "Vlastnici"
-    file_name = (
-        "byty_hromadna_korespondence.xlsx"
-        if mode == "lv" else "vlastnici_hromadna_korespondence.xlsx"
-    )
+    n_files = len(results)
+    n_errors = sum(1 for r in results if r["error"])
+    n_simple = sum(1 for r in results if r["mode"] == "simple")
+    n_lv = sum(1 for r in results if r["mode"] == "lv")
+    total_rows = sum(len(r["rows"]) for r in results)
 
-    n_kontrola = (df["Kontrola"] == "ANO").sum()
-    st.subheader("Náhled tabulky")
-    st.caption(
-        "⚠️ Tabulka níže má v pravém horním rohu (po najetí myší) svoji "
-        "vlastní malou ikonku ke stažení – ta vždy stáhne soubor jako "
-        "**.csv** (špatně se otevírá v Excelu). Pro správný Excel soubor "
-        "použijte modré tlačítko **„⬇️ Stáhnout Excel (.xlsx)“** níže pod "
-        "tabulkou."
-    )
-    if n_kontrola:
-        st.info(
-            f"⚠️ {n_kontrola} z {len(df)} řádků má Kontrola = ANO – "
-            "doporučujeme je před odesláním ručně zkontrolovat (viz "
-            "sloupec Poznámka). Tabulku níže můžete přímo opravit."
+    if n_errors:
+        for r in results:
+            if r["error"]:
+                st.error(f"Chyba při zpracování „{r['filename']}“: {r['error']}")
+
+    if total_rows == 0 and n_errors < n_files:
+        st.warning(
+            "Ze zpracovaných souborů se nepodařilo rozpoznat žádného "
+            "vlastníka. Zkontrolujte „Debug“ níže u jednotlivých souborů."
+        )
+    elif total_rows > 0:
+        summary_bits = []
+        if n_simple:
+            summary_bits.append(f"{n_simple}× informace o stavbě/pozemku")
+        if n_lv:
+            summary_bits.append(f"{n_lv}× kompletní výpis (LV)")
+        st.success(
+            f"Hotovo – zpracováno {n_files - n_errors} souborů "
+            f"({', '.join(summary_bits)}), celkem {total_rows} řádků."
         )
 
-    edited_df = st.data_editor(
-        df,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Kontrola": st.column_config.SelectboxColumn(
-                "Kontrola", options=["ANO", "NE"]
-            ),
-        },
-    )
+results = st.session_state.get("results")
+
+if results and any(r["rows"] for r in results):
+    n_files = len(results)
+    multi_file = n_files > 1
+
+    simple_rows = []
+    lv_rows = []
+    for r in results:
+        for row in r["rows"]:
+            row_copy = dict(row)
+            if multi_file:
+                row_copy["Zdrojový soubor"] = r["filename"]
+            if r["mode"] == "simple":
+                simple_rows.append(row_copy)
+            elif r["mode"] == "lv":
+                lv_rows.append(row_copy)
 
     buffer = io.BytesIO()
+    sheets_written = []
+
+    tabs_needed = []
+    if simple_rows:
+        tabs_needed.append("simple")
+    if lv_rows:
+        tabs_needed.append("lv")
+
+    tab_objs = st.tabs(
+        ["📋 Vlastníci" if t == "simple" else "🏠 Bytové jednotky" for t in tabs_needed]
+    ) if len(tabs_needed) > 1 else [st.container()]
+
+    edited_dfs = {}
+
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        edited_df.to_excel(writer, index=False, sheet_name=sheet_name)
-        worksheet = writer.sheets[sheet_name]
-        for column_cells in worksheet.columns:
-            max_len = max(
-                (len(str(cell.value)) for cell in column_cells if cell.value),
-                default=0,
-            )
-            worksheet.column_dimensions[column_cells[0].column_letter].width = min(
-                max(max_len + 2, 12), 45
-            )
+        for tab_idx, mode in enumerate(tabs_needed):
+            with tab_objs[tab_idx]:
+                if mode == "simple":
+                    columns = COLUMNS + (["Zdrojový soubor"] if multi_file else [])
+                    df = pd.DataFrame(simple_rows, columns=columns)
+                    df = mark_married_couples(
+                        df,
+                        prijmeni_col="Příjmení / Název",
+                        osloveni_col="Oslovení",
+                        address_cols=["Ulice", "Číslo domu", "Obec", "PSČ"],
+                        file_col="Zdrojový soubor" if multi_file else None,
+                    )
+                    sheet_name = "Vlastnici"
+                else:
+                    columns = LV_COLUMNS + (["Zdrojový soubor"] if multi_file else [])
+                    df = pd.DataFrame(lv_rows, columns=columns)
+                    df = mark_married_couples(
+                        df,
+                        prijmeni_col="Příjmení",
+                        osloveni_col="Oslovení",
+                        address_cols=["Ulice", "Obec", "PSČ"],
+                        unit_col="Bytová jednotka",
+                        file_col="Zdrojový soubor" if multi_file else None,
+                    )
+                    sheet_name = "Jednotky"
+
+                n_kontrola = (df["Kontrola"] == "ANO").sum()
+                n_parcount = (df["Odeslat dopis"] != "ANO").sum()
+
+                st.subheader("Náhled tabulky")
+                st.caption(
+                    "⚠️ Tabulka níže má v pravém horním rohu (po najetí "
+                    "myší) svoji vlastní malou ikonku ke stažení – ta vždy "
+                    "stáhne soubor jako **.csv** (špatně se otevírá v "
+                    "Excelu). Pro správný Excel soubor použijte modré "
+                    "tlačítko **„⬇️ Stáhnout Excel (.xlsx)“** níže."
+                )
+                if n_parcount:
+                    st.info(
+                        f"💌 Nalezeno {n_parcount} řádků, kde manžel/"
+                        "manželka bydlí na stejné adrese - sloupec "
+                        "„Odeslat dopis“ je u nich nastaven na NE, ať pro "
+                        "hromadnou korespondenci pošlete jen jeden dopis "
+                        "na pár. Zkontrolujte prosím, že se páry "
+                        "rozpoznaly správně."
+                    )
+                if n_kontrola:
+                    st.info(
+                        f"⚠️ {n_kontrola} z {len(df)} řádků má Kontrola = "
+                        "ANO – doporučujeme je před odesláním ručně "
+                        "zkontrolovat (viz sloupec Poznámka). Tabulku "
+                        "níže můžete přímo opravit."
+                    )
+
+                edited_df = st.data_editor(
+                    df,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    column_config={
+                        "Kontrola": st.column_config.SelectboxColumn(
+                            "Kontrola", options=["ANO", "NE"]
+                        ),
+                        "Pár (manželé)": st.column_config.SelectboxColumn(
+                            "Pár (manželé)", options=["ANO", "NE"]
+                        ),
+                        "Odeslat dopis": st.column_config.SelectboxColumn(
+                            "Odeslat dopis", options=["ANO", "NE (viz manžel/manželka výše)"]
+                        ),
+                    },
+                    key=f"editor_{mode}",
+                )
+                edited_dfs[mode] = (edited_df, sheet_name)
+
+                with st.expander(f"🔍 Debug – {('všechny soubory' if not multi_file else 'soubory')}"):
+                    for r in results:
+                        if r["mode"] != mode or not r.get("debug"):
+                            continue
+                        st.markdown(f"**{r['filename']}**")
+                        debug = r["debug"]
+                        if mode == "lv":
+                            st.write(
+                                f"Záznamů v části A: {debug.get('part_a_entries_count', '?')} | "
+                                f"Jednotek celkem: {debug.get('units_total', '?')} | "
+                                f"z toho typu „byt“: {debug.get('units_byt', '?')}"
+                            )
+                            st.text_area(
+                                "Text části B (jednotky)",
+                                debug.get("part_b_text", ""),
+                                height=200,
+                                key=f"debug_partb_{r['filename']}",
+                            )
+                        else:
+                            st.text_area(
+                                "Nalezená sekce „Vlastníci, jiní oprávnění“",
+                                debug.get("section_text", ""),
+                                height=200,
+                                key=f"debug_section_{r['filename']}",
+                            )
+                        st.text_area(
+                            "Celý text načtený z PDF",
+                            debug.get("full_text", ""),
+                            height=200,
+                            key=f"debug_full_{r['filename']}",
+                        )
+
+        for mode in tabs_needed:
+            edited_df, sheet_name = edited_dfs[mode]
+            edited_df.to_excel(writer, index=False, sheet_name=sheet_name)
+            worksheet = writer.sheets[sheet_name]
+            for column_cells in worksheet.columns:
+                max_len = max(
+                    (len(str(cell.value)) for cell in column_cells if cell.value),
+                    default=0,
+                )
+                worksheet.column_dimensions[column_cells[0].column_letter].width = min(
+                    max(max_len + 2, 12), 45
+                )
+            sheets_written.append(sheet_name)
+
     buffer.seek(0)
+
+    if len(sheets_written) > 1:
+        file_name = "katastr_hromadna_korespondence.xlsx"
+    elif sheets_written == ["Jednotky"]:
+        file_name = "byty_hromadna_korespondence.xlsx"
+    else:
+        file_name = "vlastnici_hromadna_korespondence.xlsx"
 
     st.download_button(
         label="⬇️ Stáhnout Excel (.xlsx)",
@@ -215,37 +336,7 @@ if rows:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    with st.expander("🔍 Debug – zkontrolovat extrahovaný text z PDF"):
-        st.caption(
-            "Pokud výsledek neodpovídá očekávání, podívejte se sem – podle "
-            "tohoto textu lze snadno doladit pravidla v parser.py / "
-            "lv_parser.py."
-        )
-        if mode == "lv" and st.session_state.get("lv_debug"):
-            debug = st.session_state["lv_debug"]
-            st.write(
-                f"Záznamů v části A: {debug['part_a_entries_count']} | "
-                f"Jednotek celkem: {debug['units_total']} | "
-                f"z toho typu „byt“: {debug['units_byt']}"
-            )
-            st.text_area(
-                "Text části B (jednotky)",
-                st.session_state.get("section_text", ""),
-                height=250,
-            )
-        else:
-            st.text_area(
-                "Nalezená sekce „Vlastníci, jiní oprávnění“",
-                st.session_state.get("section_text", ""),
-                height=250,
-            )
-        st.text_area(
-            "Celý text načtený z PDF",
-            st.session_state.get("full_text", ""),
-            height=250,
-        )
-
-elif uploaded_file is None:
-    st.info("Nahrajte PDF soubor a klikněte na „Zpracovat“.")
+elif not uploaded_files:
+    st.info("Nahrajte jedno nebo víc PDF a klikněte na „Zpracovat“.")
 else:
-    st.info("Klikněte na „Zpracovat“ pro zpracování nahraného PDF.")
+    st.info("Klikněte na „Zpracovat“ pro zpracování nahraných PDF.")
