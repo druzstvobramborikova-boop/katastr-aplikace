@@ -183,7 +183,19 @@ def is_noise_line(line: str) -> bool:
     return False
 
 
+JEDNOTKA_LINE_RE = re.compile(r'^jednotka\s*:\s*(.+)$', re.IGNORECASE)
+
+
 def build_entries(section_text: str):
+    """
+    Vrací seznam slovníků {'text': ..., 'jednotka': ...}. 'jednotka' je
+    číslo VLASTNÍ bytové jednotky daného vlastníka (první číslo za
+    "Jednotka:" - další čísla v seznamu bývají společné části domu),
+    nebo None, pokud se nepodařilo najít. Používá se jako doplňkový
+    klíč pro spolehlivější rozpoznání manželů (viz couple_merge.py) -
+    v tomto typu PDF totiž všichni vlastníci v domě sdílí stejnou
+    adresu budovy, takže samotná adresa k rozlišení jednotek nestačí.
+    """
     raw_lines = [l.strip() for l in section_text.split('\n')]
     raw_lines = [l for l in raw_lines if l]
 
@@ -191,19 +203,25 @@ def build_entries(section_text: str):
     prev_was_content = False
 
     for line in raw_lines:
+        jednotka_match = JEDNOTKA_LINE_RE.match(line)
+        if jednotka_match and entries and entries[-1]['jednotka'] is None:
+            entries[-1]['jednotka'] = jednotka_match.group(1).split(',')[0].strip()
+            prev_was_content = False
+            continue
+
         if is_noise_line(line):
             prev_was_content = False
             continue
 
-        prev_ends_with_hyphen = bool(entries) and entries[-1].rstrip().endswith('-')
+        prev_ends_with_hyphen = bool(entries) and entries[-1]['text'].rstrip().endswith('-')
 
         if prev_was_content and entries and (',' not in line or prev_ends_with_hyphen):
             if prev_ends_with_hyphen:
-                entries[-1] = entries[-1] + line
+                entries[-1]['text'] = entries[-1]['text'] + line
             else:
-                entries[-1] = entries[-1] + ' ' + line
+                entries[-1]['text'] = entries[-1]['text'] + ' ' + line
         else:
-            entries.append(line)
+            entries.append({'text': line, 'jednotka': None})
 
         prev_was_content = True
 
@@ -574,25 +592,30 @@ def process_pdf_to_rows(file):
     """
     Hlavní vstupní funkce.
     `file` může být cesta k souboru nebo file-like objekt (např. z st.file_uploader).
-    Vrací (rows, full_text, section_text, sjm_flags).
+    Vrací (rows, full_text, section_text, sjm_flags, units).
     `sjm_flags` je seznam bool hodnot stejné délky jako `rows` - True u
     řádků, které prokazatelně pocházejí ze zápisu "SJ" (společné jmění
     manželů) v PDF.
+    `units` je seznam (stejné délky jako `rows`) s číslem vlastní bytové
+    jednotky daného vlastníka (nebo None) - používá se jako doplňkový
+    klíč pro spolehlivější rozpoznání manželů.
     """
     full_text = extract_full_text(file)
     section_text = extract_owners_section(full_text)
 
     if not section_text:
-        return [], full_text, section_text, []
+        return [], full_text, section_text, [], []
 
     entries = build_entries(section_text)
 
     rows = []
     sjm_flags = []
-    pending_roots = []  # [{'root': str, 'ttl': int}, ...]
+    units = []
+    pending_roots = []  # [{'root': str, 'ttl': int, 'unit': str|None}, ...]
 
-    for entry_text in entries:
-        text = entry_text.strip()
+    for entry in entries:
+        text = entry['text'].strip()
+        entry_unit = entry['jednotka']
         if not text:
             continue
 
@@ -607,44 +630,50 @@ def process_pdf_to_rows(file):
                 for r in new_rows:
                     rows.append(r)
                     sjm_flags.append(True)
+                    units.append(entry_unit)
             elif split:
                 name1, name2, _ = split
                 for part_name in (name1, name2):
                     root = canonical_surname_root(parse_person_name(part_name)['prijmeni'])
                     if root:
-                        pending_roots.append({'root': root, 'ttl': 3})
+                        pending_roots.append({'root': root, 'ttl': 3, 'unit': entry_unit})
             else:
                 new_rows = process_entry_text(text)
                 for r in new_rows:
                     rows.append(r)
                     sjm_flags.append(True)
+                    units.append(entry_unit)
             continue
 
         new_rows = process_entry_text(text)
         for r in new_rows:
             prij_root = canonical_surname_root(r.get('Příjmení / Název', ''))
             matched = False
+            matched_unit = entry_unit
             for p in pending_roots:
                 if p['root'] and p['root'] == prij_root:
                     matched = True
+                    matched_unit = p['unit'] or entry_unit
                     pending_roots.remove(p)
                     break
             rows.append(r)
             sjm_flags.append(matched)
+            units.append(matched_unit)
 
         for p in pending_roots:
             p['ttl'] -= 1
         pending_roots = [p for p in pending_roots if p['ttl'] > 0]
 
-    rows, sjm_flags = _dedupe_with_flags(rows, sjm_flags)
-    return rows, full_text, section_text, sjm_flags
+    rows, sjm_flags, units = _dedupe_with_flags(rows, sjm_flags, units)
+    return rows, full_text, section_text, sjm_flags, units
 
 
-def _dedupe_with_flags(rows, flags):
+def _dedupe_with_flags(rows, flags, units):
     seen = set()
     out_rows = []
     out_flags = []
-    for r, f in zip(rows, flags):
+    out_units = []
+    for r, f, u in zip(rows, flags, units):
         key = (
             r['Titul'].strip().lower(),
             r['Jméno'].strip().lower(),
@@ -659,4 +688,5 @@ def _dedupe_with_flags(rows, flags):
         seen.add(key)
         out_rows.append(r)
         out_flags.append(f)
-    return out_rows, out_flags
+        out_units.append(u)
+    return out_rows, out_flags, out_units

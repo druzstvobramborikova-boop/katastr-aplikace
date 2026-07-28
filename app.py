@@ -167,12 +167,13 @@ if process_clicked and uploaded_files:
                     "error": None,
                 })
             else:
-                rows, full_text, section_text, sjm_flags = process_pdf_to_rows(uploaded_file)
+                rows, full_text, section_text, sjm_flags, units = process_pdf_to_rows(uploaded_file)
                 results.append({
                     "filename": uploaded_file.name,
                     "mode": "simple",
                     "rows": rows,
                     "sjm_flags": sjm_flags,
+                    "units": units,
                     "debug": {"full_text": full_text, "section_text": section_text},
                     "error": None,
                 })
@@ -226,11 +227,13 @@ if results and any(r["rows"] for r in results):
     lv_rows = []
     for r in results:
         flags = r.get("sjm_flags") or [False] * len(r["rows"])
-        for row, is_sjm in zip(r["rows"], flags):
+        units_list = r.get("units") or [None] * len(r["rows"])
+        for row, is_sjm, unit in zip(r["rows"], flags, units_list):
             row_copy = dict(row)
             if multi_file:
                 row_copy["Zdrojový soubor"] = r["filename"]
             row_copy["_sjm"] = bool(is_sjm)
+            row_copy["_jednotka"] = unit or ""
             if r["mode"] == "simple":
                 simple_rows.append(row_copy)
             elif r["mode"] == "lv":
@@ -255,13 +258,14 @@ if results and any(r["rows"] for r in results):
         for tab_idx, mode in enumerate(tabs_needed):
             with tab_objs[tab_idx]:
                 if mode == "simple":
-                    columns = COLUMNS + (["Zdrojový soubor"] if multi_file else []) + ["_sjm"]
+                    columns = COLUMNS + (["Zdrojový soubor"] if multi_file else []) + ["_sjm", "_jednotka"]
                     df = pd.DataFrame(simple_rows, columns=columns)
                     df = mark_married_couples(
                         df,
                         prijmeni_col="Příjmení / Název",
                         osloveni_col="Oslovení",
                         address_cols=["Ulice", "Číslo domu", "Obec", "PSČ"],
+                        unit_col="_jednotka",
                         file_col="Zdrojový soubor" if multi_file else None,
                     )
                     df, highlight_idx = build_combined_sjm_rows(
@@ -271,9 +275,10 @@ if results and any(r["rows"] for r in results):
                         osloveni_col="Oslovení",
                         address_cols=["Ulice", "Číslo domu", "Obec", "PSČ"],
                         sjm_flag_col="_sjm",
+                        unit_col="_jednotka",
                         file_col="Zdrojový soubor" if multi_file else None,
                     )
-                    df = df.drop(columns=["_sjm"])
+                    df = df.drop(columns=["_sjm", "_jednotka"])
                     sheet_name = "Vlastnici"
                 else:
                     columns = LV_COLUMNS + (["Zdrojový soubor"] if multi_file else []) + ["_sjm"]

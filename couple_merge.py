@@ -73,6 +73,24 @@ def pluralize_surname(surname: str) -> str:
     return s + 'ovi'
 
 
+def _build_group_key(df, address_cols, unit_col=None, file_col=None):
+    """
+    Sestaví klíč pro seskupení řádků patřících k jedné nemovitosti/
+    jednotce. Kombinuje ADRESU (vždy) s číslem jednotky (pokud je
+    k dispozici) - u některých typů PDF sdílí stejnou adresu budovy
+    všichni vlastníci v domě, takže samotná adresa k rozlišení
+    jednotlivých bytů nestačí; číslo jednotky (je-li známé) ji dál
+    zpřesní. Když číslo jednotky chybí (prázdné u obou), spoléhá se
+    jen na adresu jako dřív.
+    """
+    group_key = df[address_cols].astype(str).agg('|'.join, axis=1)
+    if unit_col and unit_col in df.columns:
+        group_key = df[unit_col].astype(str) + '||' + group_key
+    if file_col and file_col in df.columns:
+        group_key = df[file_col].astype(str) + '||' + group_key
+    return group_key
+
+
 def build_combined_sjm_rows(df, jmeno_col, prijmeni_col, osloveni_col,
                              address_cols, sjm_flag_col, unit_col=None,
                              file_col=None):
@@ -97,13 +115,7 @@ def build_combined_sjm_rows(df, jmeno_col, prijmeni_col, osloveni_col,
     if sjm_flag_col not in df.columns:
         return df, []
 
-    if unit_col and unit_col in df.columns:
-        group_key = df[unit_col].astype(str)
-    else:
-        group_key = df[address_cols].astype(str).agg('|'.join, axis=1)
-
-    if file_col and file_col in df.columns:
-        group_key = df[file_col].astype(str) + '||' + group_key
+    group_key = _build_group_key(df, address_cols, unit_col, file_col)
 
     insert_after = {}
     highlight_positions = set()
@@ -198,13 +210,7 @@ def mark_married_couples(df, prijmeni_col, osloveni_col, address_cols, unit_col=
     df['Pár (manželé)'] = 'NE'
     df['Odeslat dopis'] = 'ANO'
 
-    if unit_col and unit_col in df.columns:
-        group_key = df[unit_col].astype(str)
-    else:
-        group_key = df[address_cols].astype(str).agg('|'.join, axis=1)
-
-    if file_col and file_col in df.columns:
-        group_key = df[file_col].astype(str) + '||' + group_key
+    group_key = _build_group_key(df, address_cols, unit_col, file_col)
 
     for _, idx in df.groupby(group_key).groups.items():
         idx = list(idx)
