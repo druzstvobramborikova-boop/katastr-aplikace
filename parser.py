@@ -23,6 +23,7 @@ except ImportError:  # knihovna nemusí být při lokálním testování nainsta
     _vokativ_lib = None
 
 from couple_merge import canonical_surname_root
+from titles import TITLE_LIST
 
 
 def vocative_surname(prijmeni: str, is_woman):
@@ -59,13 +60,6 @@ COLUMNS = [
     'Oslovení', 'Titul', 'Jméno', 'Příjmení / Název',
     'Ulice', 'Číslo domu', 'PSČ', 'Obec',
     'Kontrola', 'Poznámka', 'Původní adresa',
-]
-
-TITLE_LIST = [
-    'PharmDr.', 'MUDr.', 'JUDr.', 'RNDr.', 'PhDr.', 'MVDr.', 'RSDr.',
-    'Ph.D.', 'Ph.D', 'PhD.', 'PhD', 'Phd.',
-    'DiS.', 'Ing. arch.', 'arch.', 'Ing.', 'Mgr.', 'Doc.', 'CSc.',
-    'Bc.', 'MBA', 'M.A.', 'LL.M.',
 ]
 
 COMPANY_KEYWORDS = [
@@ -494,6 +488,26 @@ def split_name_address(text: str):
     return name_part, address_part
 
 
+def split_sjm_pair(rest: str):
+    """
+    Rozdělí text SJ deklarace (bez prefixu SJ/SJM/BSM/MCP) na
+    (jméno1, jméno2, adresa). Adresa může být '' (bez adresy - uvedena
+    jinde v PDF). Vrátí None, pokud se nepodaří najít dvě jména.
+
+    Nejdřív se rozdělí podle spojky " a " (odděluje dvě osoby), TEPRVE
+    POTOM se v druhé části hledá adresa - to je zásadní pro případy,
+    kdy má první osoba víc titulů oddělených čárkou (např. "Novák Jan
+    Mgr., Bc. a Nováková Jana, Adresa"), aby se čárka mezi tituly
+    nespletla s hranicí adresy.
+    """
+    parts = re.split(r'\s+a\s+', rest, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    name1 = parts[0].strip()
+    name2, address = split_name_address(parts[1])
+    return name1, name2.strip(), address.strip()
+
+
 def process_entry_text(entry_text: str):
     text = entry_text.strip()
     if not text:
@@ -504,27 +518,28 @@ def process_entry_text(entry_text: str):
     )
     if sjm_match:
         rest = sjm_match.group(1).strip()
-        if ',' in rest:
-            name_part, address_part = split_name_address(rest)
-            parts = re.split(r'\s+a\s+', name_part, maxsplit=1)
-            if len(parts) == 2:
-                row1 = make_person_row(parts[0].strip(), address_part)
-                row2 = make_person_row(parts[1].strip(), address_part)
+        split = split_sjm_pair(rest)
+        if split:
+            name1, name2, address_part = split
+            if address_part:
+                row1 = make_person_row(name1, address_part)
+                row2 = make_person_row(name2, address_part)
                 note = 'Adresa SJM použita pro oba manžele'
                 for r in (row1, row2):
                     r['Poznámka'] = '; '.join(p for p in [r['Poznámka'], note] if p)
                 return [row1, row2]
             else:
-                row = make_person_row(rest, address_part)
-                row['Kontrola'] = 'ANO'
-                row['Poznámka'] = '; '.join(
-                    p for p in [row['Poznámka'],
-                                'SJM se nepodařilo rozdělit na dvě osoby - zkontrolujte ručně']
-                    if p
-                )
-                return [row]
+                return []
         else:
-            return []
+            name_part, address_part = split_name_address(rest)
+            row = make_person_row(name_part, address_part)
+            row['Kontrola'] = 'ANO'
+            row['Poznámka'] = '; '.join(
+                p for p in [row['Poznámka'],
+                            'SJM se nepodařilo rozdělit na dvě osoby - zkontrolujte ručně']
+                if p
+            )
+            return [row]
 
     if ',' in text:
         name_part, address_part = split_name_address(text)
@@ -586,18 +601,23 @@ def process_pdf_to_rows(file):
         )
         if sjm_match:
             rest = sjm_match.group(1).strip()
-            if ',' in rest:
+            split = split_sjm_pair(rest)
+            if split and split[2]:
                 new_rows = process_entry_text(text)
                 for r in new_rows:
                     rows.append(r)
                     sjm_flags.append(True)
+            elif split:
+                name1, name2, _ = split
+                for part_name in (name1, name2):
+                    root = canonical_surname_root(parse_person_name(part_name)['prijmeni'])
+                    if root:
+                        pending_roots.append({'root': root, 'ttl': 3})
             else:
-                parts = re.split(r'\s+a\s+', rest, maxsplit=1)
-                if len(parts) == 2:
-                    for part in parts:
-                        root = canonical_surname_root(parse_person_name(part)['prijmeni'])
-                        if root:
-                            pending_roots.append({'root': root, 'ttl': 3})
+                new_rows = process_entry_text(text)
+                for r in new_rows:
+                    rows.append(r)
+                    sjm_flags.append(True)
             continue
 
         new_rows = process_entry_text(text)

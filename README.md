@@ -12,6 +12,7 @@ hromadnou korespondenci.
 | `parser.py` | Logika pro jednodušší PDF typu "Informace o stavbě/pozemku" (sekce „Vlastníci, jiní oprávnění“) |
 | `lv_parser.py` | Logika pro kompletní "VÝPIS Z KATASTRU NEMOVITOSTÍ" (list vlastnictví s částí A a B, výstup po bytových jednotkách) |
 | `couple_merge.py` | Rozpoznání manželských párů na stejné adrese (pro sloučení korespondence) |
+| `titles.py` | Databáze rozpoznávaných titulů (Bc., Ing., MUDr., Ph.D. atd.) - sem se přidávají nové tituly |
 | `requirements.txt` | Seznam potřebných knihoven |
 
 ## Dva podporované typy PDF
@@ -127,6 +128,14 @@ být tvar sporný i pro rodilého mluvčího.
 Pokud knihovna `vokativ` není nainstalovaná (např. při lokálním testu
 bez internetu), aplikace na to nespadne - jen ponechá příjmení v 1.
 pádu u všech řádků a označí je Kontrola = ANO.
+
+## Přidání nového titulu
+
+Pokud appka u nějakého vlastníka nerozpozná titul správně (zůstane
+součástí jména/příjmení), otevřete soubor **`titles.py`** a přidejte
+ho do příslušné kategorie (tituly před jménem / vědecké hodnosti za
+jménem). Nic dalšího upravovat není potřeba - zbytek appky ho začne
+rozpoznávat automaticky.
 
 ## Instalace a spuštění na Windows
 
