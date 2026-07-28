@@ -85,6 +85,50 @@ st.write(
     "sešitu dva listy)."
 )
 
+with st.expander("ℹ️ Co aplikace dělá a jak číst výsledný Excel (rozklikněte)"):
+    st.markdown(
+        """
+**Co aplikace dělá:**
+1. Přečte nahrané PDF a najde v něm seznam vlastníků (a u kompletního
+   výpisu i jejich přiřazení k jednotlivým bytovým jednotkám).
+2. Rozdělí každé jméno na oslovení, titul, jméno a příjmení a adresu
+   na ulici, obec a PSČ.
+3. U mužů a žen odhadne oslovení a skloní příjmení do 5. pádu
+   („Vážený pane Nováku“, „Vážená paní Nováková“).
+4. Rozpozná manžele na stejné adrese a u skutečných párů se zápisem
+   „SJ“ v PDF vytvoří navíc společný řádek pro hromadnou korespondenci
+   („Vážení manželé Novákovi“).
+5. Vše vyexportuje do jednoho stažitelného Excelu.
+
+**Jak číst výsledný Excel - sloupce:**
+- **Bytová jednotka** *(jen u kompletního výpisu)* - číslo jednotky,
+  ke které vlastník patří.
+- **Oslovení** - hotový pozdrav včetně skloněného příjmení, přímo
+  použitelný jako oslovení v dopise.
+- **Jméno / Příjmení (/ Název) / Titul** - rozdělené jméno vlastníka;
+  u firem a organizací je jméno prázdné a název je v poli
+  „Příjmení / Název“.
+- **Ulice / Obec / PSČ** *(+ Číslo domu u jednoduššího typu PDF)* -
+  rozdělená adresa, připravená k použití v adresním štítku.
+- **Kontrola** - **ANO** znamená, že si aplikace není jistá (např.
+  neobvyklé jméno, adresa bez uvedené městské části, zahraniční
+  adresa, firma) - takové řádky si před odesláním zkontrolujte podle
+  sloupce **Poznámka**, kde je vysvětlen důvod.
+- **Původní adresa** - adresa přesně tak, jak byla v PDF, pro ověření.
+- **Pár (manželé)** / **Odeslat dopis** - pokud aplikace na stejné
+  adrese najde dvojici opačného pohlaví se stejným kořenem příjmení,
+  označí je a u druhého z páru nastaví „Odeslat dopis“ na NE (stačí
+  poslat jeden dopis).
+- U skutečných manželských párů se zápisem „SJ“ v PDF navíc přibude
+  **třetí řádek** se společným oslovením („Vážení manželé Novákovi“) -
+  ve staženém Excelu jsou všechny tři související řádky **podbarvené
+  šedě**, abyste je snadno našli a zkontrolovali.
+
+Podrobnější popis všech pravidel a omezení najdete v souboru
+`README.md` v repozitáři aplikace.
+        """
+    )
+
 for key, default in [
     ("results", None),  # list of dicts: {filename, mode, rows, debug}
 ]:
