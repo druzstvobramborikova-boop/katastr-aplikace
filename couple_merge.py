@@ -11,6 +11,8 @@ Přidává do tabulky dva sloupce:
 - "Odeslat dopis": ANO / "NE (viz manžel/manželka výše)"
 """
 
+import pandas as pd
+
 
 def canonical_surname_root(surname: str) -> str:
     """
@@ -43,6 +45,139 @@ def gender_from_osloveni(osloveni: str):
     if osloveni.startswith('Vážený pane') and not osloveni.startswith('Vážený pane / Vážená paní'):
         return 'M'
     return None
+
+
+def pluralize_surname(surname: str) -> str:
+    """
+    Vrátí příjmení v množném čísle pro použití s "manželé", např.:
+    - Novák -> Novákovi
+    - Novotný -> Novotní
+    - Svoboda -> Svobodovi
+    Jde o heuristiku - u neobvyklých příjmení nemusí být tvar přesný,
+    proto se řádek, kde se použije, vždy označí ke kontrole.
+    """
+    s = (surname or '').strip()
+    if not s:
+        return s
+    low = s.lower()
+    if low.endswith('ský'):
+        return s[:-3] + 'ští'
+    if low.endswith('cký'):
+        return s[:-3] + 'čtí'
+    if low.endswith('ký'):
+        return s[:-2] + 'cí'
+    if low.endswith('ý'):
+        return s[:-1] + 'í'
+    if low.endswith('a'):
+        return s[:-1] + 'ovi'
+    return s + 'ovi'
+
+
+def build_combined_sjm_rows(df, jmeno_col, prijmeni_col, osloveni_col,
+                             address_cols, sjm_flag_col, unit_col=None,
+                             file_col=None):
+    """
+    Pro dvojice řádků, které:
+    - obě pocházejí ze zápisu SJ (společné jmění manželů) v PDF
+      (sjm_flag_col == True u obou),
+    - mají shodný kořen příjmení,
+    - mají shodnou adresu,
+    - patří ke stejné nemovitosti/jednotce (unit_col, pokud je k dispozici)
+      nebo stejnému zdrojovému souboru,
+
+    vloží ZA tuto dvojici nový řádek se společným oslovením
+    ("Vážení manželé Novákovi"), společným jménem ("Radka a Jiří") a
+    příjmením v množném čísle ("Novákovi"). Původní dva řádky zůstávají.
+
+    Vrací (nový_df, seznam_indexů_k_zvýraznění) - indexy odpovídají
+    řádkům v NOVÉM (vráceném) dataframu, které mají být vizuálně
+    odlišené (2 původní + 1 nově vytvořený).
+    """
+    df = df.reset_index(drop=True).copy()
+    if sjm_flag_col not in df.columns:
+        return df, []
+
+    if unit_col and unit_col in df.columns:
+        group_key = df[unit_col].astype(str)
+    else:
+        group_key = df[address_cols].astype(str).agg('|'.join, axis=1)
+
+    if file_col and file_col in df.columns:
+        group_key = df[file_col].astype(str) + '||' + group_key
+
+    insert_after = {}
+    highlight_positions = set()
+
+    for _, idx in df.groupby(group_key).groups.items():
+        idx = list(idx)
+        if len(idx) != 2:
+            continue
+        i1, i2 = idx
+        r1, r2 = df.loc[i1], df.loc[i2]
+
+        if not (bool(r1[sjm_flag_col]) and bool(r2[sjm_flag_col])):
+            continue
+
+        root1 = canonical_surname_root(r1[prijmeni_col])
+        root2 = canonical_surname_root(r2[prijmeni_col])
+        if not root1 or root1 != root2:
+            continue
+
+        addr1 = tuple(str(r1[c]).strip().lower() for c in address_cols)
+        addr2 = tuple(str(r2[c]).strip().lower() for c in address_cols)
+        if any(a == '' for a in addr1) or addr1 != addr2:
+            continue
+
+        g1 = gender_from_osloveni(r1[osloveni_col])
+        g2 = gender_from_osloveni(r2[osloveni_col])
+
+        if g1 == 'F' and g2 == 'M':
+            female_row, male_row = r1, r2
+        elif g2 == 'F' and g1 == 'M':
+            female_row, male_row = r2, r1
+        else:
+            female_row, male_row = r1, r2
+
+        female_first = str(female_row[jmeno_col]).split()[0] if str(female_row[jmeno_col]).strip() else ''
+        male_first = str(male_row[jmeno_col]).split()[0] if str(male_row[jmeno_col]).strip() else ''
+        combined_jmeno = ' a '.join(p for p in [female_first, male_first] if p)
+
+        plural_surname = pluralize_surname(male_row[prijmeni_col] or female_row[prijmeni_col])
+
+        combined = {c: male_row[c] for c in df.columns}
+        combined[jmeno_col] = combined_jmeno
+        combined[prijmeni_col] = plural_surname
+        combined[osloveni_col] = f'Vážení manželé {plural_surname}'
+        if 'Titul' in df.columns:
+            combined['Titul'] = ''
+        combined['Poznámka'] = (
+            'Automaticky vytvořený společný řádek pro manžele (SJ) - '
+            'zkontrolujte oslovení a příjmení v množném čísle'
+        )
+        combined['Kontrola'] = 'ANO' if g1 not in ('F', 'M') or g2 not in ('F', 'M') else 'NE'
+        if 'Pár (manželé)' in df.columns:
+            combined['Pár (manželé)'] = 'ANO'
+        if 'Odeslat dopis' in df.columns:
+            combined['Odeslat dopis'] = 'ANO'
+            df.loc[i1, 'Odeslat dopis'] = 'NE (viz spojený řádek níže)'
+            df.loc[i2, 'Odeslat dopis'] = 'NE (viz spojený řádek níže)'
+
+        insert_after[max(idx)] = combined
+        highlight_positions.update(idx)
+
+    records = df.to_dict('records')
+    new_records = []
+    new_highlight_indices = []
+    for pos, rec in enumerate(records):
+        new_records.append(rec)
+        if pos in highlight_positions:
+            new_highlight_indices.append(len(new_records) - 1)
+        if pos in insert_after:
+            new_records.append(insert_after[pos])
+            new_highlight_indices.append(len(new_records) - 1)
+
+    new_df = pd.DataFrame(new_records, columns=df.columns)
+    return new_df, new_highlight_indices
 
 
 def mark_married_couples(df, prijmeni_col, osloveni_col, address_cols, unit_col=None, file_col=None):

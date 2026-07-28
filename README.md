@@ -66,6 +66,33 @@ I zde platí, že jde o automatické rozpoznávání - u neobvyklých
 příjmení doporučujeme páry před odesláním zkontrolovat (sloupec je
 přímo v náhledu editovatelný).
 
+### Automatický společný řádek pro manžele v SJ (společné jmění manželů)
+
+Pokud PDF u vlastníka uvádí zkratku **„SJ“** (společné jmění manželů) a
+zároveň platí, že oba manželé mají **shodný kořen příjmení**, **shodnou
+adresu** a jde o **stejnou nemovitost/jednotku**, aplikace navíc
+automaticky vytvoří TŘETÍ řádek se společným zápisem pro hromadnou
+korespondenci:
+
+- **Oslovení:** „Vážení manželé Novákovi“
+- **Jméno:** „Radka a Jiří“ (ženské jméno první, mužské druhé)
+- **Příjmení:** „Novákovi“ (množné číslo - zvládá i nepravidelné tvary
+  jako Novotný → Novotní, Javorský → Javorští, Svoboda → Svobodovi)
+
+Původní dva jednotlivé řádky ZŮSTÁVAJÍ v tabulce (jen jim sloupec
+„Odeslat dopis“ nastaví na NE, ať se pro hromadnou korespondenci
+použije jen ten nový spojený řádek).
+
+**Ve staženém Excelu jsou všechny tři související řádky (2 původní +
+1 nový) podbarvené šedě**, abyste je na první pohled našli a mohli
+zkontrolovat, že je vše správně - zejména tvar příjmení v množném
+čísle, který je u méně obvyklých jmen jen heuristický odhad.
+
+Toto rozpoznávání funguje jen pro skutečné páry se zápisem „SJ“ v PDF
+(tedy prokazatelné manžele podle katastru) - dva různí vlastníci, kteří
+náhodou bydlí na stejné adrese a mají podobné příjmení, ale v PDF NEJSOU
+uvedeni jako SJ, se takto nespojí.
+
 ## Ulice a městská část
 
 Sloupec **Ulice** obsahuje jen ulici a číslo domu (např. „Kyselova

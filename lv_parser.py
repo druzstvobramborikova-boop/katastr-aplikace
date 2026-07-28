@@ -368,7 +368,9 @@ SHARE_TRAILING_RE = re.compile(r'\s+\d+/\d+\s*$')
 def parse_owner_line(owner_line: str):
     """
     Rozparsuje jeden 'ID [ID2]; Jméno [podíl_na_jednotce]' řádek na
-    seznam (id, name) dvojic.
+    seznam (id, name, is_sjm) trojic. is_sjm je True, pokud řádek
+    obsahoval DVA identifikátory spojené "a" mezi jmény - to v tomto
+    formátu PDF spolehlivě znamená společné jmění manželů (SJ).
     """
     if ';' not in owner_line:
         return []
@@ -383,11 +385,11 @@ def parse_owner_line(owner_line: str):
     if len(ids) == 2:
         parts = re.split(r'\s+a\s+', rest, maxsplit=1)
         if len(parts) == 2:
-            return [(ids[0], parts[0].strip()), (ids[1], parts[1].strip())]
-        return [(ids[0], rest), (ids[1], '')]
+            return [(ids[0], parts[0].strip(), True), (ids[1], parts[1].strip(), True)]
+        return [(ids[0], rest, False), (ids[1], '', False)]
 
     single_id = ids[0] if ids else ''
-    return [(single_id, rest)]
+    return [(single_id, rest, False)]
 
 
 # ---------------------------------------------------------------------------
@@ -538,12 +540,13 @@ def process_lv_pdf_to_rows(file):
 
     rows = []
     unmatched = []
+    sjm_flags = []
 
     for unit in units:
         if unit.get('typ_vyuziti', '').strip() != 'byt':
             continue
         for owner_line in unit.get('owner_lines', []):
-            for owner_id, owner_name in parse_owner_line(owner_line):
+            for owner_id, owner_name, is_sjm in parse_owner_line(owner_line):
                 owner_name = owner_name.strip()
                 if not owner_name:
                     continue
@@ -562,6 +565,7 @@ def process_lv_pdf_to_rows(file):
                         unmatched.append((unit['unit'], owner_id, owner_name))
 
                 rows.append(make_lv_row(unit['unit'], owner_name, address, note))
+                sjm_flags.append(is_sjm)
 
     debug_info = {
         'full_text': full_text,
@@ -570,5 +574,6 @@ def process_lv_pdf_to_rows(file):
         'units_total': len(units),
         'units_byt': sum(1 for u in units if u.get('typ_vyuziti', '').strip() == 'byt'),
         'unmatched': unmatched,
+        'sjm_flags': sjm_flags,
     }
     return rows, debug_info

@@ -22,6 +22,8 @@ try:
 except ImportError:  # knihovna nemusí být při lokálním testování nainstalovaná
     _vokativ_lib = None
 
+from couple_merge import canonical_surname_root
+
 
 def vocative_surname(prijmeni: str, is_woman):
     """
@@ -554,17 +556,87 @@ def dedupe(rows):
 
 
 def process_pdf_to_rows(file):
+    """
+    Hlavní vstupní funkce.
+    `file` může být cesta k souboru nebo file-like objekt (např. z st.file_uploader).
+    Vrací (rows, full_text, section_text, sjm_flags).
+    `sjm_flags` je seznam bool hodnot stejné délky jako `rows` - True u
+    řádků, které prokazatelně pocházejí ze zápisu "SJ" (společné jmění
+    manželů) v PDF.
+    """
     full_text = extract_full_text(file)
     section_text = extract_owners_section(full_text)
 
     if not section_text:
-        return [], full_text, section_text
+        return [], full_text, section_text, []
 
     entries = build_entries(section_text)
 
     rows = []
-    for entry_text in entries:
-        rows.extend(process_entry_text(entry_text))
+    sjm_flags = []
+    pending_roots = []  # [{'root': str, 'ttl': int}, ...]
 
-    rows = dedupe(rows)
-    return rows, full_text, section_text
+    for entry_text in entries:
+        text = entry_text.strip()
+        if not text:
+            continue
+
+        sjm_match = re.match(
+            r'^' + JOINT_OWNERSHIP_PREFIXES + r'\b[:.]?\s*(.*)$', text, re.IGNORECASE
+        )
+        if sjm_match:
+            rest = sjm_match.group(1).strip()
+            if ',' in rest:
+                new_rows = process_entry_text(text)
+                for r in new_rows:
+                    rows.append(r)
+                    sjm_flags.append(True)
+            else:
+                parts = re.split(r'\s+a\s+', rest, maxsplit=1)
+                if len(parts) == 2:
+                    for part in parts:
+                        root = canonical_surname_root(parse_person_name(part)['prijmeni'])
+                        if root:
+                            pending_roots.append({'root': root, 'ttl': 3})
+            continue
+
+        new_rows = process_entry_text(text)
+        for r in new_rows:
+            prij_root = canonical_surname_root(r.get('Příjmení / Název', ''))
+            matched = False
+            for p in pending_roots:
+                if p['root'] and p['root'] == prij_root:
+                    matched = True
+                    pending_roots.remove(p)
+                    break
+            rows.append(r)
+            sjm_flags.append(matched)
+
+        for p in pending_roots:
+            p['ttl'] -= 1
+        pending_roots = [p for p in pending_roots if p['ttl'] > 0]
+
+    rows, sjm_flags = _dedupe_with_flags(rows, sjm_flags)
+    return rows, full_text, section_text, sjm_flags
+
+
+def _dedupe_with_flags(rows, flags):
+    seen = set()
+    out_rows = []
+    out_flags = []
+    for r, f in zip(rows, flags):
+        key = (
+            r['Titul'].strip().lower(),
+            r['Jméno'].strip().lower(),
+            r['Příjmení / Název'].strip().lower(),
+            r['Ulice'].strip().lower(),
+            r['Číslo domu'].strip().lower(),
+            r['PSČ'].strip().lower(),
+            r['Obec'].strip().lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out_rows.append(r)
+        out_flags.append(f)
+    return out_rows, out_flags

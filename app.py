@@ -23,10 +23,13 @@ import io
 import pandas as pd
 import pdfplumber
 import streamlit as st
+from openpyxl.styles import PatternFill
 
 from parser import process_pdf_to_rows, COLUMNS
 from lv_parser import process_lv_pdf_to_rows, LV_COLUMNS, is_lv_document
-from couple_merge import mark_married_couples
+from couple_merge import mark_married_couples, build_combined_sjm_rows
+
+GRAY_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
 
 st.set_page_config(
     page_title="Katastr → Excel pro hromadnou korespondenci",
@@ -115,15 +118,17 @@ if process_clicked and uploaded_files:
                     "filename": uploaded_file.name,
                     "mode": "lv",
                     "rows": rows,
+                    "sjm_flags": debug.get("sjm_flags", [False] * len(rows)),
                     "debug": debug,
                     "error": None,
                 })
             else:
-                rows, full_text, section_text = process_pdf_to_rows(uploaded_file)
+                rows, full_text, section_text, sjm_flags = process_pdf_to_rows(uploaded_file)
                 results.append({
                     "filename": uploaded_file.name,
                     "mode": "simple",
                     "rows": rows,
+                    "sjm_flags": sjm_flags,
                     "debug": {"full_text": full_text, "section_text": section_text},
                     "error": None,
                 })
@@ -176,10 +181,12 @@ if results and any(r["rows"] for r in results):
     simple_rows = []
     lv_rows = []
     for r in results:
-        for row in r["rows"]:
+        flags = r.get("sjm_flags") or [False] * len(r["rows"])
+        for row, is_sjm in zip(r["rows"], flags):
             row_copy = dict(row)
             if multi_file:
                 row_copy["Zdrojový soubor"] = r["filename"]
+            row_copy["_sjm"] = bool(is_sjm)
             if r["mode"] == "simple":
                 simple_rows.append(row_copy)
             elif r["mode"] == "lv":
@@ -204,7 +211,7 @@ if results and any(r["rows"] for r in results):
         for tab_idx, mode in enumerate(tabs_needed):
             with tab_objs[tab_idx]:
                 if mode == "simple":
-                    columns = COLUMNS + (["Zdrojový soubor"] if multi_file else [])
+                    columns = COLUMNS + (["Zdrojový soubor"] if multi_file else []) + ["_sjm"]
                     df = pd.DataFrame(simple_rows, columns=columns)
                     df = mark_married_couples(
                         df,
@@ -213,9 +220,19 @@ if results and any(r["rows"] for r in results):
                         address_cols=["Ulice", "Číslo domu", "Obec", "PSČ"],
                         file_col="Zdrojový soubor" if multi_file else None,
                     )
+                    df, highlight_idx = build_combined_sjm_rows(
+                        df,
+                        jmeno_col="Jméno",
+                        prijmeni_col="Příjmení / Název",
+                        osloveni_col="Oslovení",
+                        address_cols=["Ulice", "Číslo domu", "Obec", "PSČ"],
+                        sjm_flag_col="_sjm",
+                        file_col="Zdrojový soubor" if multi_file else None,
+                    )
+                    df = df.drop(columns=["_sjm"])
                     sheet_name = "Vlastnici"
                 else:
-                    columns = LV_COLUMNS + (["Zdrojový soubor"] if multi_file else [])
+                    columns = LV_COLUMNS + (["Zdrojový soubor"] if multi_file else []) + ["_sjm"]
                     df = pd.DataFrame(lv_rows, columns=columns)
                     df = mark_married_couples(
                         df,
@@ -225,10 +242,22 @@ if results and any(r["rows"] for r in results):
                         unit_col="Bytová jednotka",
                         file_col="Zdrojový soubor" if multi_file else None,
                     )
+                    df, highlight_idx = build_combined_sjm_rows(
+                        df,
+                        jmeno_col="Jméno",
+                        prijmeni_col="Příjmení",
+                        osloveni_col="Oslovení",
+                        address_cols=["Ulice", "Obec", "PSČ"],
+                        sjm_flag_col="_sjm",
+                        unit_col="Bytová jednotka",
+                        file_col="Zdrojový soubor" if multi_file else None,
+                    )
+                    df = df.drop(columns=["_sjm"])
                     sheet_name = "Jednotky"
 
                 n_kontrola = (df["Kontrola"] == "ANO").sum()
                 n_parcount = (df["Odeslat dopis"] != "ANO").sum()
+                n_sjm_combined = len(highlight_idx) // 3
 
                 st.subheader("Náhled tabulky")
                 st.caption(
@@ -238,6 +267,16 @@ if results and any(r["rows"] for r in results):
                     "Excelu). Pro správný Excel soubor použijte modré "
                     "tlačítko **„⬇️ Stáhnout Excel (.xlsx)“** níže."
                 )
+                if n_sjm_combined:
+                    st.info(
+                        f"👫 U {n_sjm_combined} manželských párů (rozpoznaných podle "
+                        "zápisu „SJ“ v PDF, shodného příjmení a shodné adresy) byl "
+                        "vytvořen řádek navíc se společným oslovením pro hromadnou "
+                        "korespondenci. Tyto řádky (2 původní + 1 nový) jsou ve "
+                        "staženém Excelu podbarvené šedě – zkontrolujte prosím, že "
+                        "vypadají správně, a případně jeden z původních dvou řádků "
+                        "před odesláním smažte."
+                    )
                 if n_parcount:
                     st.info(
                         f"💌 Nalezeno {n_parcount} řádků, kde manžel/"
@@ -272,7 +311,7 @@ if results and any(r["rows"] for r in results):
                     },
                     key=f"editor_{mode}",
                 )
-                edited_dfs[mode] = (edited_df, sheet_name)
+                edited_dfs[mode] = (edited_df, sheet_name, highlight_idx)
 
                 with st.expander(f"🔍 Debug – {('všechny soubory' if not multi_file else 'soubory')}"):
                     for r in results:
@@ -307,7 +346,7 @@ if results and any(r["rows"] for r in results):
                         )
 
         for mode in tabs_needed:
-            edited_df, sheet_name = edited_dfs[mode]
+            edited_df, sheet_name, highlight_idx = edited_dfs[mode]
             edited_df.to_excel(writer, index=False, sheet_name=sheet_name)
             worksheet = writer.sheets[sheet_name]
             for column_cells in worksheet.columns:
@@ -318,6 +357,13 @@ if results and any(r["rows"] for r in results):
                 worksheet.column_dimensions[column_cells[0].column_letter].width = min(
                     max(max_len + 2, 12), 45
                 )
+            n_cols = len(edited_df.columns)
+            for row_pos in highlight_idx:
+                if row_pos >= len(edited_df):
+                    continue
+                excel_row = row_pos + 2  # +1 hlavička, +1 1-indexování
+                for col_idx in range(1, n_cols + 1):
+                    worksheet.cell(row=excel_row, column=col_idx).fill = GRAY_FILL
             sheets_written.append(sheet_name)
 
     buffer.seek(0)
